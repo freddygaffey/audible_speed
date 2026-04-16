@@ -16,6 +16,21 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **API codegen**: Orval (from OpenAPI spec)
 - **Build**: esbuild (CJS bundle)
 
+## Artifacts
+
+### Audiobook Player (artifacts/audiobook-player)
+- **Type**: Expo (React Native) mobile app
+- **Preview path**: `/`
+- **Features**:
+  - Library screen with search, sort (Recent, In Progress, A-Z), and section grouping
+  - Book cards with color-coded covers, progress badges, and chapter info
+  - Player screen with play/pause, skip ±15s/30s, speed control (0.5x–3x), progress bar
+  - Mini player that appears at bottom while listening
+  - Add book modal for manually adding audiobooks with title, author, narrator, duration
+  - Long-press to remove books from library
+  - Persistence via AsyncStorage
+  - Dark/light theme support via useColors hook
+
 ## Key Commands
 
 - `pnpm run typecheck` — full typecheck across all packages

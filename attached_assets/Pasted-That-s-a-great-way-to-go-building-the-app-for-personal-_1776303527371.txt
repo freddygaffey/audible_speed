@@ -1,0 +1,131 @@
+That's a great way to go—building the app for personal use and installing it in **developer mode** allows you to fully customize the app without worrying about app store restrictions. Here's a streamlined plan for creating your personal audiobook app.
+
+---
+
+### **Detailed Plan**
+
+#### **1. Start with an Ionic/Capacitor Project**
+You’ll use Ionic/Capacitor for the app's structure.
+
+```bash
+npm install -g @ionic/cli
+ionic start audiobook-player blank --capacitor
+cd audiobook-player
+npm install howler
+```
+
+This creates the **basic app structure** and installs **Howler.js** for playback.
+
+---
+
+#### **2. Integrate Libation to Fetch Audiobooks**
+While Libation isn't built directly for mobile, you can use its code for downloading and organizing your Audible audiobooks.
+
+1. **Clone the Libation Code**:
+   ```bash
+   git clone https://github.com/rmcrackan/Libation.git
+   ```
+2. Extract the **download functionality** from Libation:
+   - Modify the Python backend to:
+     - Only fetch **downloaded audiobook files**.
+     - Output files in a local directory, e.g., `capacitor://storage/`.
+
+3. Create a script/service in the app to invoke the modified **Libation downloader**:
+   - Use a button to trigger the audiobook download to your app.
+
+> This assumes you have an Audible account ready for credentials configuration.
+
+---
+
+#### **3. Add Audiobook Playback Features**
+Use **Howler.js** to build the playback engine.
+
+**Example Player File** (`player.js`):
+```javascript
+import { Howl } from 'howler';
+
+export class AudiobookPlayer {
+  constructor(filePath) {
+    this.player = new Howl({
+      src: [filePath],
+      html5: true, // Improves mobile performance
+    });
+  }
+
+  play() {
+    this.player.play();
+  }
+
+  pause() {
+    this.player.pause();
+  }
+
+  setSpeed(rate) {
+    this.player.rate(rate); // Adjust playback rate
+  }
+
+  seekPosition(seconds) {
+    this.player.seek(seconds); // Fast-forward/rewind
+  }
+}
+```
+
+**Player User Interface**:
+- Add buttons for **Play**, **Pause**, and **Seek**.
+- Add a slider for speed adjustment *(e.g., 0.5x to 5x)*.
+
+---
+
+#### **4. Organize Audiobook Library**
+- Use **Ionic Storage API** to save and retrieve audiobook metadata.
+- For example:
+  ```javascript
+  import { Storage } from '@ionic/storage-angular';
+
+  const storage = new Storage();
+  const library = await storage.create();
+
+  // Save in Storage
+  await library.set('audiobooks', audiobookData);
+
+  // Retrieve from Storage
+  const audiobooks = await library.get('audiobooks');
+  ```
+
+- Build a simple **list view** in Ionic to display saved audiobooks.
+
+---
+
+#### **5. Test and Install in Developer Mode**
+1. **Build the App**:
+   ```bash
+   ionic build
+   ```
+
+2. **Add Platforms** (iOS, Android):
+   ```bash
+   ionic capacitor add ios
+   ionic capacitor add android
+   ```
+
+3. **Deploy the App to Your Device**:
+   - On **Android**:
+     ```bash
+     ionic capacitor run android --device
+     ```
+   - On **iOS**:
+     Open the project in Xcode (`ios/App.xcworkspace`) and deploy to your device.
+
+4. **Run in Developer Mode**:
+   - Enable developer mode on your phone.
+   - Install the app directly.
+
+---
+
+### **Next Steps and Fine-Tuning**
+Would you like me to:
+- Write the full **download integration code**?
+- Build a layout/UI for the player and library?
+- Help you modify Libation or create your script for fetching audiobooks?
+
+Let me know which part you’d like to prioritize!

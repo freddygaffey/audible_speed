@@ -1,0 +1,27 @@
+kind = "mobile"
+previewPath = "/"
+title = "Audiobook Player"
+version = "1.0.0"
+id = "artifacts/audiobook-player"
+router = "expo-domain"
+
+[[integratedSkills]]
+name = "expo"
+version = "1.0.0"
+
+[[services]]
+ensurePreviewReachable = "/status"
+name = "expo"
+paths = [ "/" ]
+localPort = 19791
+
+[services.development]
+run = "pnpm --filter @workspace/audiobook-player run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/audiobook-player", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/audiobook-player", "run", "serve" ]
+
+[services.env]
+PORT = "19791"
+BASE_PATH = "/"

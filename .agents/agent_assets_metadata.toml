@@ -1,0 +1,8 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "DXU7WjRlFlE9uCBoTeR_k"
+uri = "file://artifacts/audiobook-player/assets/images/icon.png"
+type = "image"
+title = "audiobook app icon"
