@@ -109,7 +109,7 @@ export default function AuthPage() {
                 Connect Audible Account
               </Button>
               <p className="text-[11px] text-muted-foreground text-center">
-                This will open an Amazon login page. After logging in, you will be redirected to a page that may fail to load. This is normal.
+                Opens <span className="text-foreground">amazon.com</span> (always, regardless of marketplace). After logging in, copy the URL of the page you land on — it may show an error, that is normal.
               </p>
             </div>
           </div>
@@ -120,7 +120,7 @@ export default function AuthPage() {
               <Input 
                 value={redirectUrl} 
                 onChange={e => setRedirectUrl(e.target.value)}
-                placeholder="https://amazon.com/ap/oa?openid.oa2.authorization_code=..."
+                placeholder="https://www.amazon.com/ap/maplanding?openid.oa2.authorization_code=..."
                 className="font-mono text-xs"
               />
             </div>

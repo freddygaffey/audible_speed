@@ -96,33 +96,37 @@ export function generatePKCE(): { codeVerifier: string; codeChallenge: string } 
   return { codeVerifier, codeChallenge };
 }
 
-export function buildOAuthUrl(marketplace: string, codeChallenge: string): string {
-  const config = MARKETPLACES[marketplace] ?? MARKETPLACES.us;
+// Always auth through amazon.com — the client_id is only registered with the US LWA service.
+// Regional Audible API calls use the marketplace-specific domain after auth.
+const OAUTH_DOMAIN = "www.amazon.com";
+const OAUTH_CLIENT_ID = "MaoKgCUuCnP4AxMc5HQPsQgIkiT6hFBN";
+export const OAUTH_REDIRECT_URI = `https://${OAUTH_DOMAIN}/ap/maplanding`;
+
+export function buildOAuthUrl(_marketplace: string, codeChallenge: string): string {
   const params = new URLSearchParams({
-    client_id: config.clientId,
+    client_id: OAUTH_CLIENT_ID,
     scope: "device_auth_access",
     response_type: "code",
-    redirect_uri: `https://${config.domain}/ap/maplanding`,
+    redirect_uri: OAUTH_REDIRECT_URI,
     oa_entry_point: "exit",
     language: "en-US",
     code_challenge_method: "S256",
     code_challenge: codeChallenge,
   });
-  return `https://${config.domain}/ap/oa?${params.toString()}`;
+  return `https://${OAUTH_DOMAIN}/ap/oa?${params.toString()}`;
 }
 
 export async function exchangeCodeForTokens(
   code: string,
   codeVerifier: string,
-  marketplace: string
+  _marketplace: string
 ): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }> {
-  const config = MARKETPLACES[marketplace] ?? MARKETPLACES.us;
   const body = new URLSearchParams({
-    client_id: config.clientId,
+    client_id: OAUTH_CLIENT_ID,
     code,
     code_verifier: codeVerifier,
     grant_type: "authorization_code",
-    redirect_uri: `https://${config.domain}/ap/maplanding`,
+    redirect_uri: OAUTH_REDIRECT_URI,
   });
 
   const resp = await fetch("https://api.amazon.com/auth/O2/token", {
