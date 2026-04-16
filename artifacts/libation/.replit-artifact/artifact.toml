@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/libation/"
+title = "Libation — Audible Library Manager"
+version = "1.0.0"
+id = "artifacts/libation"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/libation/" ]
+localPort = 19984
+
+[services.development]
+run = "pnpm --filter @workspace/libation run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/libation", "run", "build" ]
+publicDir = "artifacts/libation/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19984"
+BASE_PATH = "/libation/"

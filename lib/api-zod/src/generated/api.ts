@@ -14,3 +14,193 @@ import * as zod from "zod";
 export const HealthCheckResponse = zod.object({
   status: zod.string(),
 });
+
+/**
+ * Returns a URL the user should open to log in with Amazon/Audible
+ * @summary Get Amazon OAuth URL
+ */
+export const getAudibleAuthUrlQueryMarketplaceDefault = `us`;
+
+export const GetAudibleAuthUrlQueryParams = zod.object({
+  marketplace: zod.coerce
+    .string()
+    .default(getAudibleAuthUrlQueryMarketplaceDefault),
+});
+
+export const GetAudibleAuthUrlResponse = zod.object({
+  url: zod.string(),
+  codeVerifier: zod.string(),
+  marketplace: zod.string(),
+});
+
+/**
+ * Exchanges the authorization code from Amazon redirect for access/refresh tokens
+ * @summary Exchange auth code for tokens
+ */
+export const exchangeAudibleCodeBodyMarketplaceDefault = `us`;
+
+export const ExchangeAudibleCodeBody = zod.object({
+  code: zod.string(),
+  codeVerifier: zod.string(),
+  marketplace: zod.string().default(exchangeAudibleCodeBodyMarketplaceDefault),
+});
+
+export const ExchangeAudibleCodeResponse = zod.object({
+  authenticated: zod.boolean(),
+  username: zod.string().nullish(),
+  email: zod.string().nullish(),
+  marketplace: zod.string().nullish(),
+  expiresAt: zod.string().nullish(),
+});
+
+/**
+ * @summary Get authentication status
+ */
+export const GetAudibleAuthStatusResponse = zod.object({
+  authenticated: zod.boolean(),
+  username: zod.string().nullish(),
+  email: zod.string().nullish(),
+  marketplace: zod.string().nullish(),
+  expiresAt: zod.string().nullish(),
+});
+
+/**
+ * @summary Log out from Audible
+ */
+export const LogoutAudibleResponse = zod.object({
+  message: zod.string(),
+});
+
+/**
+ * Fetches the authenticated user's full Audible library
+ * @summary Get Audible library
+ */
+export const getAudibleLibraryQueryPageDefault = 1;
+export const getAudibleLibraryQueryPageSizeDefault = 50;
+
+export const GetAudibleLibraryQueryParams = zod.object({
+  page: zod.coerce.number().default(getAudibleLibraryQueryPageDefault),
+  pageSize: zod.coerce.number().default(getAudibleLibraryQueryPageSizeDefault),
+});
+
+export const GetAudibleLibraryResponse = zod.object({
+  books: zod.array(
+    zod.object({
+      asin: zod.string(),
+      title: zod.string(),
+      subtitle: zod.string().nullish(),
+      authors: zod.array(zod.string()),
+      narrators: zod.array(zod.string()),
+      coverUrl: zod.string().nullish(),
+      runtimeMinutes: zod.number().nullish(),
+      purchaseDate: zod.string().nullish(),
+      seriesTitle: zod.string().nullish(),
+      seriesPosition: zod.string().nullish(),
+      releaseDate: zod.string().nullish(),
+      description: zod.string().nullish(),
+      status: zod.string().describe("available | downloaded | downloading"),
+    }),
+  ),
+  total: zod.number(),
+  page: zod.number(),
+  pageSize: zod.number(),
+});
+
+/**
+ * Returns counts and aggregate stats for the library
+ * @summary Get library stats
+ */
+export const GetLibraryStatsResponse = zod.object({
+  total: zod.number(),
+  downloaded: zod.number(),
+  downloading: zod.number(),
+  totalHours: zod.number(),
+});
+
+/**
+ * @summary List all download jobs
+ */
+export const ListDownloadsResponseItem = zod.object({
+  id: zod.string(),
+  asin: zod.string(),
+  title: zod.string(),
+  status: zod
+    .string()
+    .describe("queued | downloading | converting | done | error"),
+  progress: zod.number().describe("0-100"),
+  format: zod.string(),
+  outputPath: zod.string().nullish(),
+  error: zod.string().nullish(),
+  createdAt: zod.string(),
+  updatedAt: zod.string(),
+});
+export const ListDownloadsResponse = zod.array(ListDownloadsResponseItem);
+
+/**
+ * @summary Start a download job
+ */
+export const startDownloadBodyFormatDefault = `mp3`;
+
+export const StartDownloadBody = zod.object({
+  asin: zod.string(),
+  title: zod.string(),
+  format: zod
+    .string()
+    .default(startDownloadBodyFormatDefault)
+    .describe("mp3 or m4b"),
+});
+
+export const StartDownloadResponse = zod.object({
+  id: zod.string(),
+  asin: zod.string(),
+  title: zod.string(),
+  status: zod
+    .string()
+    .describe("queued | downloading | converting | done | error"),
+  progress: zod.number().describe("0-100"),
+  format: zod.string(),
+  outputPath: zod.string().nullish(),
+  error: zod.string().nullish(),
+  createdAt: zod.string(),
+  updatedAt: zod.string(),
+});
+
+/**
+ * @summary Get a download job
+ */
+export const GetDownloadJobParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const GetDownloadJobResponse = zod.object({
+  id: zod.string(),
+  asin: zod.string(),
+  title: zod.string(),
+  status: zod
+    .string()
+    .describe("queued | downloading | converting | done | error"),
+  progress: zod.number().describe("0-100"),
+  format: zod.string(),
+  outputPath: zod.string().nullish(),
+  error: zod.string().nullish(),
+  createdAt: zod.string(),
+  updatedAt: zod.string(),
+});
+
+/**
+ * @summary Cancel or remove a download job
+ */
+export const CancelDownloadParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const CancelDownloadResponse = zod.object({
+  message: zod.string(),
+});
+
+/**
+ * @summary Download the completed MP3 file
+ */
+export const DownloadFileParams = zod.object({
+  id: zod.coerce.string(),
+});

@@ -6,4 +6,15 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from "./audibleBook";
+export * from "./authExchangeBody";
+export * from "./authStatus";
+export * from "./authUrlResponse";
+export * from "./downloadJob";
+export * from "./downloadRequest";
+export * from "./getAudibleAuthUrlParams";
+export * from "./getAudibleLibraryParams";
 export * from "./healthStatus";
+export * from "./libraryResponse";
+export * from "./libraryStats";
+export * from "./simpleMessage";

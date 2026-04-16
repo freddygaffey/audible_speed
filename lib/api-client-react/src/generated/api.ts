@@ -5,18 +5,33 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
+  MutationFunction,
   QueryFunction,
   QueryKey,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult,
 } from "@tanstack/react-query";
 
-import type { HealthStatus } from "./api.schemas";
+import type {
+  AuthExchangeBody,
+  AuthStatus,
+  AuthUrlResponse,
+  DownloadJob,
+  DownloadRequest,
+  GetAudibleAuthUrlParams,
+  GetAudibleLibraryParams,
+  HealthStatus,
+  LibraryResponse,
+  LibraryStats,
+  SimpleMessage,
+} from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
-import type { ErrorType } from "../custom-fetch";
+import type { ErrorType, BodyType } from "../custom-fetch";
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -92,6 +107,940 @@ export function useHealthCheck<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getHealthCheckQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns a URL the user should open to log in with Amazon/Audible
+ * @summary Get Amazon OAuth URL
+ */
+export const getGetAudibleAuthUrlUrl = (params?: GetAudibleAuthUrlParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/audible/auth/url?${stringifiedParams}`
+    : `/api/audible/auth/url`;
+};
+
+export const getAudibleAuthUrl = async (
+  params?: GetAudibleAuthUrlParams,
+  options?: RequestInit,
+): Promise<AuthUrlResponse> => {
+  return customFetch<AuthUrlResponse>(getGetAudibleAuthUrlUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAudibleAuthUrlQueryKey = (
+  params?: GetAudibleAuthUrlParams,
+) => {
+  return [`/api/audible/auth/url`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetAudibleAuthUrlQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAudibleAuthUrl>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetAudibleAuthUrlParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAudibleAuthUrl>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetAudibleAuthUrlQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAudibleAuthUrl>>
+  > = ({ signal }) => getAudibleAuthUrl(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAudibleAuthUrl>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAudibleAuthUrlQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAudibleAuthUrl>>
+>;
+export type GetAudibleAuthUrlQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get Amazon OAuth URL
+ */
+
+export function useGetAudibleAuthUrl<
+  TData = Awaited<ReturnType<typeof getAudibleAuthUrl>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetAudibleAuthUrlParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAudibleAuthUrl>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAudibleAuthUrlQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Exchanges the authorization code from Amazon redirect for access/refresh tokens
+ * @summary Exchange auth code for tokens
+ */
+export const getExchangeAudibleCodeUrl = () => {
+  return `/api/audible/auth/exchange`;
+};
+
+export const exchangeAudibleCode = async (
+  authExchangeBody: AuthExchangeBody,
+  options?: RequestInit,
+): Promise<AuthStatus> => {
+  return customFetch<AuthStatus>(getExchangeAudibleCodeUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(authExchangeBody),
+  });
+};
+
+export const getExchangeAudibleCodeMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof exchangeAudibleCode>>,
+    TError,
+    { data: BodyType<AuthExchangeBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof exchangeAudibleCode>>,
+  TError,
+  { data: BodyType<AuthExchangeBody> },
+  TContext
+> => {
+  const mutationKey = ["exchangeAudibleCode"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof exchangeAudibleCode>>,
+    { data: BodyType<AuthExchangeBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return exchangeAudibleCode(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ExchangeAudibleCodeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof exchangeAudibleCode>>
+>;
+export type ExchangeAudibleCodeMutationBody = BodyType<AuthExchangeBody>;
+export type ExchangeAudibleCodeMutationError = ErrorType<void>;
+
+/**
+ * @summary Exchange auth code for tokens
+ */
+export const useExchangeAudibleCode = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof exchangeAudibleCode>>,
+    TError,
+    { data: BodyType<AuthExchangeBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof exchangeAudibleCode>>,
+  TError,
+  { data: BodyType<AuthExchangeBody> },
+  TContext
+> => {
+  return useMutation(getExchangeAudibleCodeMutationOptions(options));
+};
+
+/**
+ * @summary Get authentication status
+ */
+export const getGetAudibleAuthStatusUrl = () => {
+  return `/api/audible/auth/status`;
+};
+
+export const getAudibleAuthStatus = async (
+  options?: RequestInit,
+): Promise<AuthStatus> => {
+  return customFetch<AuthStatus>(getGetAudibleAuthStatusUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAudibleAuthStatusQueryKey = () => {
+  return [`/api/audible/auth/status`] as const;
+};
+
+export const getGetAudibleAuthStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAudibleAuthStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getAudibleAuthStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetAudibleAuthStatusQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAudibleAuthStatus>>
+  > = ({ signal }) => getAudibleAuthStatus({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAudibleAuthStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAudibleAuthStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAudibleAuthStatus>>
+>;
+export type GetAudibleAuthStatusQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get authentication status
+ */
+
+export function useGetAudibleAuthStatus<
+  TData = Awaited<ReturnType<typeof getAudibleAuthStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getAudibleAuthStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAudibleAuthStatusQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Log out from Audible
+ */
+export const getLogoutAudibleUrl = () => {
+  return `/api/audible/auth/logout`;
+};
+
+export const logoutAudible = async (
+  options?: RequestInit,
+): Promise<SimpleMessage> => {
+  return customFetch<SimpleMessage>(getLogoutAudibleUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getLogoutAudibleMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof logoutAudible>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof logoutAudible>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["logoutAudible"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof logoutAudible>>,
+    void
+  > = () => {
+    return logoutAudible(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type LogoutAudibleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof logoutAudible>>
+>;
+
+export type LogoutAudibleMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Log out from Audible
+ */
+export const useLogoutAudible = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof logoutAudible>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof logoutAudible>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getLogoutAudibleMutationOptions(options));
+};
+
+/**
+ * Fetches the authenticated user's full Audible library
+ * @summary Get Audible library
+ */
+export const getGetAudibleLibraryUrl = (params?: GetAudibleLibraryParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/audible/library?${stringifiedParams}`
+    : `/api/audible/library`;
+};
+
+export const getAudibleLibrary = async (
+  params?: GetAudibleLibraryParams,
+  options?: RequestInit,
+): Promise<LibraryResponse> => {
+  return customFetch<LibraryResponse>(getGetAudibleLibraryUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAudibleLibraryQueryKey = (
+  params?: GetAudibleLibraryParams,
+) => {
+  return [`/api/audible/library`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetAudibleLibraryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAudibleLibrary>>,
+  TError = ErrorType<void>,
+>(
+  params?: GetAudibleLibraryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAudibleLibrary>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetAudibleLibraryQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAudibleLibrary>>
+  > = ({ signal }) => getAudibleLibrary(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAudibleLibrary>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAudibleLibraryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAudibleLibrary>>
+>;
+export type GetAudibleLibraryQueryError = ErrorType<void>;
+
+/**
+ * @summary Get Audible library
+ */
+
+export function useGetAudibleLibrary<
+  TData = Awaited<ReturnType<typeof getAudibleLibrary>>,
+  TError = ErrorType<void>,
+>(
+  params?: GetAudibleLibraryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAudibleLibrary>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAudibleLibraryQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns counts and aggregate stats for the library
+ * @summary Get library stats
+ */
+export const getGetLibraryStatsUrl = () => {
+  return `/api/audible/library/stats`;
+};
+
+export const getLibraryStats = async (
+  options?: RequestInit,
+): Promise<LibraryStats> => {
+  return customFetch<LibraryStats>(getGetLibraryStatsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetLibraryStatsQueryKey = () => {
+  return [`/api/audible/library/stats`] as const;
+};
+
+export const getGetLibraryStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getLibraryStats>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getLibraryStats>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetLibraryStatsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getLibraryStats>>> = ({
+    signal,
+  }) => getLibraryStats({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getLibraryStats>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetLibraryStatsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getLibraryStats>>
+>;
+export type GetLibraryStatsQueryError = ErrorType<void>;
+
+/**
+ * @summary Get library stats
+ */
+
+export function useGetLibraryStats<
+  TData = Awaited<ReturnType<typeof getLibraryStats>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getLibraryStats>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetLibraryStatsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List all download jobs
+ */
+export const getListDownloadsUrl = () => {
+  return `/api/audible/downloads`;
+};
+
+export const listDownloads = async (
+  options?: RequestInit,
+): Promise<DownloadJob[]> => {
+  return customFetch<DownloadJob[]>(getListDownloadsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListDownloadsQueryKey = () => {
+  return [`/api/audible/downloads`] as const;
+};
+
+export const getListDownloadsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listDownloads>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listDownloads>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListDownloadsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listDownloads>>> = ({
+    signal,
+  }) => listDownloads({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listDownloads>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListDownloadsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listDownloads>>
+>;
+export type ListDownloadsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List all download jobs
+ */
+
+export function useListDownloads<
+  TData = Awaited<ReturnType<typeof listDownloads>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listDownloads>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListDownloadsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Start a download job
+ */
+export const getStartDownloadUrl = () => {
+  return `/api/audible/download`;
+};
+
+export const startDownload = async (
+  downloadRequest: DownloadRequest,
+  options?: RequestInit,
+): Promise<DownloadJob> => {
+  return customFetch<DownloadJob>(getStartDownloadUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(downloadRequest),
+  });
+};
+
+export const getStartDownloadMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof startDownload>>,
+    TError,
+    { data: BodyType<DownloadRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof startDownload>>,
+  TError,
+  { data: BodyType<DownloadRequest> },
+  TContext
+> => {
+  const mutationKey = ["startDownload"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof startDownload>>,
+    { data: BodyType<DownloadRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return startDownload(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type StartDownloadMutationResult = NonNullable<
+  Awaited<ReturnType<typeof startDownload>>
+>;
+export type StartDownloadMutationBody = BodyType<DownloadRequest>;
+export type StartDownloadMutationError = ErrorType<void>;
+
+/**
+ * @summary Start a download job
+ */
+export const useStartDownload = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof startDownload>>,
+    TError,
+    { data: BodyType<DownloadRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof startDownload>>,
+  TError,
+  { data: BodyType<DownloadRequest> },
+  TContext
+> => {
+  return useMutation(getStartDownloadMutationOptions(options));
+};
+
+/**
+ * @summary Get a download job
+ */
+export const getGetDownloadJobUrl = (id: string) => {
+  return `/api/audible/download/${id}`;
+};
+
+export const getDownloadJob = async (
+  id: string,
+  options?: RequestInit,
+): Promise<DownloadJob> => {
+  return customFetch<DownloadJob>(getGetDownloadJobUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetDownloadJobQueryKey = (id: string) => {
+  return [`/api/audible/download/${id}`] as const;
+};
+
+export const getGetDownloadJobQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDownloadJob>>,
+  TError = ErrorType<void>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDownloadJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetDownloadJobQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getDownloadJob>>> = ({
+    signal,
+  }) => getDownloadJob(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDownloadJob>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDownloadJobQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDownloadJob>>
+>;
+export type GetDownloadJobQueryError = ErrorType<void>;
+
+/**
+ * @summary Get a download job
+ */
+
+export function useGetDownloadJob<
+  TData = Awaited<ReturnType<typeof getDownloadJob>>,
+  TError = ErrorType<void>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDownloadJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDownloadJobQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Cancel or remove a download job
+ */
+export const getCancelDownloadUrl = (id: string) => {
+  return `/api/audible/download/${id}`;
+};
+
+export const cancelDownload = async (
+  id: string,
+  options?: RequestInit,
+): Promise<SimpleMessage> => {
+  return customFetch<SimpleMessage>(getCancelDownloadUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getCancelDownloadMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof cancelDownload>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof cancelDownload>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["cancelDownload"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof cancelDownload>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return cancelDownload(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CancelDownloadMutationResult = NonNullable<
+  Awaited<ReturnType<typeof cancelDownload>>
+>;
+
+export type CancelDownloadMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Cancel or remove a download job
+ */
+export const useCancelDownload = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof cancelDownload>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof cancelDownload>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getCancelDownloadMutationOptions(options));
+};
+
+/**
+ * @summary Download the completed MP3 file
+ */
+export const getDownloadFileUrl = (id: string) => {
+  return `/api/audible/download/${id}/file`;
+};
+
+export const downloadFile = async (
+  id: string,
+  options?: RequestInit,
+): Promise<Blob> => {
+  return customFetch<Blob>(getDownloadFileUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getDownloadFileQueryKey = (id: string) => {
+  return [`/api/audible/download/${id}/file`] as const;
+};
+
+export const getDownloadFileQueryOptions = <
+  TData = Awaited<ReturnType<typeof downloadFile>>,
+  TError = ErrorType<void>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof downloadFile>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getDownloadFileQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof downloadFile>>> = ({
+    signal,
+  }) => downloadFile(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof downloadFile>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type DownloadFileQueryResult = NonNullable<
+  Awaited<ReturnType<typeof downloadFile>>
+>;
+export type DownloadFileQueryError = ErrorType<void>;
+
+/**
+ * @summary Download the completed MP3 file
+ */
+
+export function useDownloadFile<
+  TData = Awaited<ReturnType<typeof downloadFile>>,
+  TError = ErrorType<void>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof downloadFile>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getDownloadFileQueryOptions(id, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

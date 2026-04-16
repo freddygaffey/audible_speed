@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: audible
+    description: Audible integration
 paths:
   /healthz:
     get:
@@ -24,6 +26,215 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /audible/auth/url:
+    get:
+      operationId: getAudibleAuthUrl
+      tags: [audible]
+      summary: Get Amazon OAuth URL
+      description: Returns a URL the user should open to log in with Amazon/Audible
+      parameters:
+        - name: marketplace
+          in: query
+          schema:
+            type: string
+            default: us
+      responses:
+        "200":
+          description: OAuth URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUrlResponse"
+
+  /audible/auth/exchange:
+    post:
+      operationId: exchangeAudibleCode
+      tags: [audible]
+      summary: Exchange auth code for tokens
+      description: Exchanges the authorization code from Amazon redirect for access/refresh tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthExchangeBody"
+      responses:
+        "200":
+          description: Auth successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthStatus"
+        "400":
+          description: Bad request
+
+  /audible/auth/status:
+    get:
+      operationId: getAudibleAuthStatus
+      tags: [audible]
+      summary: Get authentication status
+      responses:
+        "200":
+          description: Auth status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthStatus"
+
+  /audible/auth/logout:
+    post:
+      operationId: logoutAudible
+      tags: [audible]
+      summary: Log out from Audible
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimpleMessage"
+
+  /audible/library:
+    get:
+      operationId: getAudibleLibrary
+      tags: [audible]
+      summary: Get Audible library
+      description: Fetches the authenticated user's full Audible library
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Library books
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryResponse"
+        "401":
+          description: Not authenticated
+
+  /audible/library/stats:
+    get:
+      operationId: getLibraryStats
+      tags: [audible]
+      summary: Get library stats
+      description: Returns counts and aggregate stats for the library
+      responses:
+        "200":
+          description: Library stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryStats"
+        "401":
+          description: Not authenticated
+
+  /audible/downloads:
+    get:
+      operationId: listDownloads
+      tags: [audible]
+      summary: List all download jobs
+      responses:
+        "200":
+          description: Download jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DownloadJob"
+
+  /audible/download:
+    post:
+      operationId: startDownload
+      tags: [audible]
+      summary: Start a download job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DownloadRequest"
+      responses:
+        "200":
+          description: Download job created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadJob"
+        "401":
+          description: Not authenticated
+
+  /audible/download/{id}:
+    get:
+      operationId: getDownloadJob
+      tags: [audible]
+      summary: Get a download job
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Download job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadJob"
+        "404":
+          description: Not found
+
+    delete:
+      operationId: cancelDownload
+      tags: [audible]
+      summary: Cancel or remove a download job
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimpleMessage"
+
+  /audible/download/{id}/file:
+    get:
+      operationId: downloadFile
+      tags: [audible]
+      summary: Download the completed MP3 file
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Audio file
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Not found or not complete
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +245,181 @@ components:
       required:
         - status
 
+    AuthUrlResponse:
+      type: object
+      properties:
+        url:
+          type: string
+        codeVerifier:
+          type: string
+        marketplace:
+          type: string
+      required:
+        - url
+        - codeVerifier
+        - marketplace
+
+    AuthExchangeBody:
+      type: object
+      properties:
+        code:
+          type: string
+        codeVerifier:
+          type: string
+        marketplace:
+          type: string
+          default: us
+      required:
+        - code
+        - codeVerifier
+
+    AuthStatus:
+      type: object
+      properties:
+        authenticated:
+          type: boolean
+        username:
+          type: ["string", "null"]
+        email:
+          type: ["string", "null"]
+        marketplace:
+          type: ["string", "null"]
+        expiresAt:
+          type: ["string", "null"]
+      required:
+        - authenticated
+
+    SimpleMessage:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+
+    AudibleBook:
+      type: object
+      properties:
+        asin:
+          type: string
+        title:
+          type: string
+        subtitle:
+          type: ["string", "null"]
+        authors:
+          type: array
+          items:
+            type: string
+        narrators:
+          type: array
+          items:
+            type: string
+        coverUrl:
+          type: ["string", "null"]
+        runtimeMinutes:
+          type: ["integer", "null"]
+        purchaseDate:
+          type: ["string", "null"]
+        seriesTitle:
+          type: ["string", "null"]
+        seriesPosition:
+          type: ["string", "null"]
+        releaseDate:
+          type: ["string", "null"]
+        description:
+          type: ["string", "null"]
+        status:
+          type: string
+          description: "available | downloaded | downloading"
+      required:
+        - asin
+        - title
+        - authors
+        - narrators
+        - status
+
+    LibraryResponse:
+      type: object
+      properties:
+        books:
+          type: array
+          items:
+            $ref: "#/components/schemas/AudibleBook"
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+      required:
+        - books
+        - total
+        - page
+        - pageSize
+
+    LibraryStats:
+      type: object
+      properties:
+        total:
+          type: integer
+        downloaded:
+          type: integer
+        downloading:
+          type: integer
+        totalHours:
+          type: integer
+      required:
+        - total
+        - downloaded
+        - downloading
+        - totalHours
+
+    DownloadRequest:
+      type: object
+      properties:
+        asin:
+          type: string
+        title:
+          type: string
+        format:
+          type: string
+          default: mp3
+          description: "mp3 or m4b"
+      required:
+        - asin
+        - title
+
+    DownloadJob:
+      type: object
+      properties:
+        id:
+          type: string
+        asin:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+          description: "queued | downloading | converting | done | error"
+        progress:
+          type: integer
+          description: 0-100
+        format:
+          type: string
+        outputPath:
+          type: ["string", "null"]
+        error:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required:
+        - id
+        - asin
+        - title
+        - status
+        - progress
+        - format
+        - createdAt
+        - updatedAt

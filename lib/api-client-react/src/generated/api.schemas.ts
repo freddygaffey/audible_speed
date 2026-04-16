@@ -8,3 +8,103 @@
 export interface HealthStatus {
   status: string;
 }
+
+export interface AuthUrlResponse {
+  url: string;
+  codeVerifier: string;
+  marketplace: string;
+}
+
+export interface AuthExchangeBody {
+  code: string;
+  codeVerifier: string;
+  marketplace?: string;
+}
+
+export interface AuthStatus {
+  authenticated: boolean;
+  /** @nullable */
+  username?: string | null;
+  /** @nullable */
+  email?: string | null;
+  /** @nullable */
+  marketplace?: string | null;
+  /** @nullable */
+  expiresAt?: string | null;
+}
+
+export interface SimpleMessage {
+  message: string;
+}
+
+export interface AudibleBook {
+  asin: string;
+  title: string;
+  /** @nullable */
+  subtitle?: string | null;
+  authors: string[];
+  narrators: string[];
+  /** @nullable */
+  coverUrl?: string | null;
+  /** @nullable */
+  runtimeMinutes?: number | null;
+  /** @nullable */
+  purchaseDate?: string | null;
+  /** @nullable */
+  seriesTitle?: string | null;
+  /** @nullable */
+  seriesPosition?: string | null;
+  /** @nullable */
+  releaseDate?: string | null;
+  /** @nullable */
+  description?: string | null;
+  /** available | downloaded | downloading */
+  status: string;
+}
+
+export interface LibraryResponse {
+  books: AudibleBook[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface LibraryStats {
+  total: number;
+  downloaded: number;
+  downloading: number;
+  totalHours: number;
+}
+
+export interface DownloadRequest {
+  asin: string;
+  title: string;
+  /** mp3 or m4b */
+  format?: string;
+}
+
+export interface DownloadJob {
+  id: string;
+  asin: string;
+  title: string;
+  /** queued | downloading | converting | done | error */
+  status: string;
+  /** 0-100 */
+  progress: number;
+  format: string;
+  /** @nullable */
+  outputPath?: string | null;
+  /** @nullable */
+  error?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type GetAudibleAuthUrlParams = {
+  marketplace?: string;
+};
+
+export type GetAudibleLibraryParams = {
+  page?: number;
+  pageSize?: number;
+};
