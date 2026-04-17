@@ -61,7 +61,7 @@ Detailed plan: `plans/08-capacitor-wrap.md`
 Lock-screen controls, continue playing when screen off, resume on app foreground. iOS + Android specifics diverge here.
 Detailed plan: `plans/09-background-playback.md`
 
-### [ ] 10 — Library polish
+### [x] 10 — Library polish
 Search, sort (recent / in-progress / A–Z), progress badges. Port UX patterns from `artifacts/audiobook-player` and `artifacts/libation`.
 Detailed plan: `plans/10-library-polish.md`
 
