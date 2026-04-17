@@ -25,7 +25,7 @@ Related docs: `FEATURES.md` (what), `FRAMEWORK.md` (how), `CLAUDE.md` (repo guid
 Vite + React + TS + Tailwind + Capacitor shell. pnpm workspace member. One empty route renders. Typecheck + dev server green.
 Detailed plan: `plans/00-scaffold.md`
 
-### [ ] 01 — Audible auth (web)
+### [x] 01 — Audible auth (web)
 PKCE flow end-to-end in the browser. Port logic from `audibleAuth.ts`. Marketplace picker, popup, paste redirect URL, extract code, exchange for tokens. Session persists across reloads. All 9 marketplaces selectable.
 Detailed plan: `plans/01-auth.md`
 
