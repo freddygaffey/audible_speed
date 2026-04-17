@@ -33,7 +33,7 @@ Detailed plan: `plans/01-auth.md`
 `GET /api/audible/library` (or direct Audible call — decide in plan). Render book grid. Cache to IndexedDB. Offline read works after first load.
 Detailed plan: `plans/02-library.md`
 
-### [ ] 03 — Activation bytes
+### [x] 03 — Activation bytes
 Capture / retrieve activation bytes. Store encrypted locally. Without this, DRM strip fails.
 Detailed plan: `plans/03-activation-bytes.md`
 

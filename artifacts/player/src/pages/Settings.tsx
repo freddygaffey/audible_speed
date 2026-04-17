@@ -1,0 +1,116 @@
+import { useState, useEffect, type FormEvent } from "react";
+import { useLocation } from "wouter";
+import { ArrowLeft, Check, Loader2 } from "lucide-react";
+import { useAuth } from "../lib/authContext";
+import { setActivationBytes as apiSetActivationBytes } from "../lib/apiClient";
+import {
+  saveActivationBytes,
+  loadActivationBytes,
+  clearActivationBytes,
+  isValidActivationBytes,
+} from "../lib/activationBytes";
+
+export default function Settings() {
+  const { session, signOut } = useAuth();
+  const [, navigate] = useLocation();
+  const [bytes, setBytes] = useState(() => loadActivationBytes() ?? "");
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  async function handleSave(e: FormEvent) {
+    e.preventDefault();
+    const trimmed = bytes.trim();
+    if (!isValidActivationBytes(trimmed)) {
+      setErrorMsg("Must be exactly 8 hexadecimal characters (e.g. 1a2b3c4d).");
+      return;
+    }
+    setStatus("saving");
+    setErrorMsg("");
+    try {
+      await apiSetActivationBytes(trimmed);
+      saveActivationBytes(trimmed);
+      setStatus("saved");
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Failed to save");
+      setStatus("error");
+    }
+  }
+
+  function handleClear() {
+    clearActivationBytes();
+    setBytes("");
+    setStatus("idle");
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-950 px-4 pt-6 pb-8">
+      <div className="mx-auto max-w-sm space-y-8">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate("/library")}
+            className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-800 hover:text-white"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <h1 className="text-xl font-bold text-white">Settings</h1>
+        </div>
+
+        {session && (
+          <div className="rounded-xl border border-gray-800 bg-gray-900 p-4 space-y-1">
+            <p className="text-sm text-white font-medium">{session.username}</p>
+            <p className="text-xs text-gray-400">{session.email}</p>
+            <p className="text-xs text-gray-500">{session.marketplace.toUpperCase()}</p>
+            <button
+              onClick={signOut}
+              className="mt-3 text-xs text-red-400 hover:text-red-300"
+            >
+              Sign out
+            </button>
+          </div>
+        )}
+
+        <form onSubmit={handleSave} className="space-y-4">
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-gray-300">
+              Activation bytes
+            </label>
+            <p className="mb-3 text-xs text-gray-500">
+              8-character hex string used to decrypt .aax files. Find yours with{" "}
+              <code className="text-gray-400">audible-activator</code> or{" "}
+              <code className="text-gray-400">AAXClean</code>.
+            </p>
+            <input
+              type="text"
+              value={bytes}
+              onChange={(e) => { setBytes(e.target.value); setStatus("idle"); }}
+              placeholder="1a2b3c4d"
+              maxLength={8}
+              className="w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 font-mono text-white placeholder-gray-600 focus:border-orange-500 focus:outline-none"
+            />
+          </div>
+          {errorMsg && <p className="text-sm text-red-400">{errorMsg}</p>}
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={status === "saving"}
+              className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-orange-500 px-4 py-2.5 font-medium text-white hover:bg-orange-600 disabled:opacity-50"
+            >
+              {status === "saving" && <Loader2 className="h-4 w-4 animate-spin" />}
+              {status === "saved" && <Check className="h-4 w-4" />}
+              {status === "saved" ? "Saved" : "Save"}
+            </button>
+            {bytes && (
+              <button
+                type="button"
+                onClick={handleClear}
+                className="rounded-lg border border-gray-700 px-4 py-2.5 text-sm text-gray-400 hover:border-gray-500"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}

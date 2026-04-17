@@ -99,3 +99,15 @@ const LibraryResponseSchema = z.object({
 export function fetchLibrary(page = 1, pageSize = 50) {
   return apiFetch(LibraryResponseSchema, `/audible/library?page=${page}&pageSize=${pageSize}`);
 }
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+export function setActivationBytes(activationBytes: string) {
+  return apiFetch(
+    z.object({ message: z.string() }),
+    "/audible/settings/activation-bytes",
+    { method: "POST", body: JSON.stringify({ activationBytes }) }
+  );
+}

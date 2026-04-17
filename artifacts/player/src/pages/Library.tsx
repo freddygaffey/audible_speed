@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { Clock, BookOpen, WifiOff } from "lucide-react";
+import { Clock, BookOpen, WifiOff, Settings } from "lucide-react";
+import { Link } from "wouter";
 import { fetchLibrary, type Book } from "../lib/apiClient";
 import { saveLibrary, loadLibrary } from "../lib/libraryCache";
 
@@ -76,6 +77,12 @@ export default function Library() {
               </p>
             )}
           </div>
+          <Link
+            href="/settings"
+            className="rounded-lg p-2 text-gray-400 hover:bg-gray-800 hover:text-white"
+          >
+            <Settings className="h-5 w-5" />
+          </Link>
         </div>
 
         {isOffline && (

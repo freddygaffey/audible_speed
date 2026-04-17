@@ -2,6 +2,7 @@ import { Route, Switch, Redirect } from "wouter";
 import { AuthProvider, useAuth } from "./lib/authContext";
 import Auth from "./pages/Auth";
 import Library from "./pages/Library";
+import Settings from "./pages/Settings";
 
 function Routes() {
   const { status } = useAuth();
@@ -21,6 +22,7 @@ function Routes() {
   return (
     <Switch>
       <Route path="/library" component={Library} />
+      <Route path="/settings" component={Settings} />
       <Route path="/">
         <Redirect to="/library" />
       </Route>

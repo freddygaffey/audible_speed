@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useReducer, type ReactNode } from "react";
 import { z } from "zod";
-import { getAuthStatus, logout } from "./apiClient";
+import { getAuthStatus, logout, setActivationBytes } from "./apiClient";
+import { loadActivationBytes } from "./activationBytes";
 
 const StoredSessionSchema = z.object({
   username: z.string(),
@@ -65,6 +66,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             type: "SET_SESSION",
             session: { username: s.username, email: s.email ?? "", marketplace: s.marketplace },
           });
+          const stored = loadActivationBytes();
+          if (stored) setActivationBytes(stored).catch(() => {});
         } else {
           dispatch({ type: "CLEAR" });
         }
