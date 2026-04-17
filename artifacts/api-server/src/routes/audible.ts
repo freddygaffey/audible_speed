@@ -29,6 +29,115 @@ import {
 const router: IRouter = Router();
 
 // ---------------------------------------------------------------------------
+// Debug — probe what Amazon sends back during login (dev only)
+// ---------------------------------------------------------------------------
+
+router.post("/audible/auth/debug-login", async (req, res): Promise<void> => {
+  const { email, password, marketplace = "us" } = req.body as {
+    email?: string;
+    password?: string;
+    marketplace?: string;
+  };
+
+  if (!email || !password) {
+    res.status(400).json({ error: "email and password required" });
+    return;
+  }
+
+  const IOS_UA = "Audible/671 CFNetwork/1335.0.3 Darwin/21.6.0";
+  const cfg = (MARKETPLACES as any)[marketplace] ?? (MARKETPLACES as any).us;
+
+  try {
+    // Step 1: fetch login page
+    const params = new URLSearchParams({
+      "openid.pape.preferred_auth_policies": "MultiFactor",
+      "openid.claimed_id": "http://specs.openid.net/auth/2.0/identifier_select",
+      "pageId": cfg.assocHandle,
+      "openid.mode": "checkid_setup",
+      "openid.ns.pape": "http://specs.openid.net/extensions/pape/1.0",
+      "openid.identity": "http://specs.openid.net/auth/2.0/identifier_select",
+      "openid.assoc_handle": cfg.assocHandle,
+      "openid.return_to": `https://${cfg.domain}/ap/maplanding`,
+      "openid.ns": "http://specs.openid.net/auth/2.0",
+    });
+    const loginUrl = `https://${cfg.domain}/ap/signin?${params}`;
+    const getResp = await fetch(loginUrl, {
+      headers: { "User-Agent": IOS_UA, "Accept-Language": "en-US" },
+      redirect: "follow",
+    });
+    const getHtml = await getResp.text();
+    const setCookies = getResp.headers.getSetCookie?.() ?? [];
+
+    // Extract hidden fields
+    const fields: Record<string, string> = {};
+    const re = /<input[^>]+type=["']hidden["'][^>]*>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(getHtml)) !== null) {
+      const tag = m[0];
+      const nm = /name=["']([^"']+)["']/.exec(tag);
+      const vm = /value=["']([^"']*)["']/.exec(tag);
+      if (nm) fields[nm[1]] = vm ? vm[1] : "";
+    }
+    const actionM = /action=["']([^"']+)["']/.exec(getHtml);
+    const formAction = actionM
+      ? (actionM[1].startsWith("http") ? actionM[1] : `https://${cfg.domain}${actionM[1]}`)
+      : `https://${cfg.domain}/ap/signin`;
+
+    // Detect GET page
+    const getPageType = getHtml.includes("ap_email") ? "login-form" : "other";
+
+    // Step 2: submit credentials
+    const cookieStr = setCookies.map((c: string) => c.split(";")[0]).join("; ");
+    const postBody = new URLSearchParams({ ...fields, email, password, appAction: "SIGNIN" });
+    const postResp = await fetch(formAction, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": IOS_UA,
+        "Cookie": cookieStr,
+        "Accept-Language": "en-US",
+        "Referer": loginUrl,
+      },
+      body: postBody.toString(),
+    });
+
+    const postStatus = postResp.status;
+    const postLocation = postResp.headers.get("location") ?? "";
+    let postHtml = "";
+    if (postStatus !== 301 && postStatus !== 302) {
+      postHtml = await postResp.text();
+    }
+
+    res.json({
+      step1: {
+        url: getResp.url,
+        status: getResp.status,
+        pageType: getPageType,
+        fieldCount: Object.keys(fields).length,
+        fieldNames: Object.keys(fields),
+        formAction,
+        cookieCount: setCookies.length,
+      },
+      step2: {
+        status: postStatus,
+        location: postLocation,
+        htmlSnippet: postHtml.slice(0, 2000),
+        containsOtp: postHtml.includes("otpCode") || postHtml.includes("cvf-input"),
+        containsCaptcha: postHtml.includes("captcha"),
+        containsError: postHtml.includes("auth-error") || postHtml.includes("a-alert"),
+        errorText: (() => {
+          const em = /<div[^>]*class="[^"]*a-alert[^"]*"[^>]*>([\s\S]*?)<\/div>/i.exec(postHtml);
+          return em ? em[1].replace(/<[^>]+>/g, " ").trim().slice(0, 300) : null;
+        })(),
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message, stack: err.stack });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Auth — server-side login (no client_id needed, uses Audible iOS UA)
 // ---------------------------------------------------------------------------
 
