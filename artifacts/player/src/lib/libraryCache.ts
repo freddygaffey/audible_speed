@@ -17,6 +17,11 @@ export function saveLibrary(books: Book[], total: number) {
   }
 }
 
+export function getBook(asin: string): Book | null {
+  const cache = loadLibrary();
+  return cache?.books.find((b) => b.asin === asin) ?? null;
+}
+
 export function loadLibrary(): { books: Book[]; total: number } | null {
   try {
     const raw = localStorage.getItem(CACHE_KEY);

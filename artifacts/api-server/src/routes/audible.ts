@@ -343,8 +343,8 @@ router.get("/audible/download/:id/file", async (req, res): Promise<void> => {
   const mimeType = ext === "m4b" ? "audio/mp4" : "audio/mpeg";
   const fileName = `${job.title.replace(/[^a-z0-9 ]/gi, "_")}.${ext}`;
   res.setHeader("Content-Type", mimeType);
-  res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
-  fs.createReadStream(job.outputPath).pipe(res);
+  res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+  res.sendFile(job.outputPath);
 });
 
 // POST /audible/settings/activation-bytes

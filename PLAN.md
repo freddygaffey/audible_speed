@@ -45,11 +45,11 @@ Detailed plan: `plans/04-download.md`
 Run `ffmpeg -activation_bytes <hex> -i in.aax -c:a copy out.m4b` in the browser. Output plays in a raw `<audio>` tag. No UI yet.
 Detailed plan: `plans/05-drm-strip.md`
 
-### [ ] 06 — Player UI
+### [x] 06 — Player UI
 Play/pause, seek, chapters, skip ±30s. Works against a local decrypted file. Still web-only.
 Detailed plan: `plans/06-player-ui.md`
 
-### [ ] 07 — Pitch-preserving speed 0.5×–16×
+### [x] 07 — Pitch-preserving speed 0.5×–16×
 `soundtouch-js` or `rubberband-wasm` in an AudioWorklet. 17-step slider. Judge intelligibility at 16× by ear. Pick the algorithm that actually works at high speed, not the first one that compiles.
 Detailed plan: `plans/07-speed.md`
 
