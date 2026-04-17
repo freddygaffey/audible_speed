@@ -1,0 +1,14 @@
+dist/
+node_modules/
+
+# iOS build artifacts (Pods can be regenerated with pod install)
+ios/App/Pods/
+ios/App/App/build/
+ios/.DS_Store
+
+# Android build artifacts
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/.DS_Store

@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useLocation } from "wouter";
 import { ArrowLeft, Check, Loader2 } from "lucide-react";
 import { useAuth } from "../lib/authContext";
@@ -9,6 +9,7 @@ import {
   clearActivationBytes,
   isValidActivationBytes,
 } from "../lib/activationBytes";
+import { isNative, getStoredServerUrl, saveServerUrl } from "../lib/platformConfig";
 
 export default function Settings() {
   const { session, signOut } = useAuth();
@@ -16,6 +17,8 @@ export default function Settings() {
   const [bytes, setBytes] = useState(() => loadActivationBytes() ?? "");
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [serverUrl, setServerUrl] = useState(() => getStoredServerUrl());
+  const [serverSaved, setServerSaved] = useState(false);
 
   async function handleSave(e: FormEvent) {
     e.preventDefault();
@@ -42,6 +45,12 @@ export default function Settings() {
     setStatus("idle");
   }
 
+  function handleSaveServerUrl() {
+    saveServerUrl(serverUrl);
+    setServerSaved(true);
+    setTimeout(() => setServerSaved(false), 2000);
+  }
+
   return (
     <div className="min-h-screen bg-gray-950 px-4 pt-6 pb-8">
       <div className="mx-auto max-w-sm space-y-8">
@@ -65,6 +74,32 @@ export default function Settings() {
               className="mt-3 text-xs text-red-400 hover:text-red-300"
             >
               Sign out
+            </button>
+          </div>
+        )}
+
+        {isNative() && (
+          <div className="space-y-3">
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-gray-300">Server URL</label>
+              <p className="mb-3 text-xs text-gray-500">
+                Address of your Speed API server (e.g. http://192.168.1.100:3001).
+              </p>
+              <input
+                type="url"
+                value={serverUrl}
+                onChange={(e) => { setServerUrl(e.target.value); setServerSaved(false); }}
+                placeholder="http://192.168.1.100:3001"
+                className="w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-white placeholder-gray-600 focus:border-orange-500 focus:outline-none"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleSaveServerUrl}
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-gray-700 px-4 py-2.5 text-sm text-gray-300 hover:border-gray-500"
+            >
+              {serverSaved && <Check className="h-4 w-4 text-green-400" />}
+              {serverSaved ? "Saved" : "Save server URL"}
             </button>
           </div>
         )}
