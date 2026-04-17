@@ -29,7 +29,7 @@ Detailed plan: `plans/00-scaffold.md`
 PKCE flow end-to-end in the browser. Port logic from `audibleAuth.ts`. Marketplace picker, popup, paste redirect URL, extract code, exchange for tokens. Session persists across reloads. All 9 marketplaces selectable.
 Detailed plan: `plans/01-auth.md`
 
-### [ ] 02 — Library list
+### [x] 02 — Library list
 `GET /api/audible/library` (or direct Audible call — decide in plan). Render book grid. Cache to IndexedDB. Offline read works after first load.
 Detailed plan: `plans/02-library.md`
 

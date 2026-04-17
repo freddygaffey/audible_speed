@@ -1,7 +1,7 @@
-import { Route, Switch } from "wouter";
+import { Route, Switch, Redirect } from "wouter";
 import { AuthProvider, useAuth } from "./lib/authContext";
 import Auth from "./pages/Auth";
-import Home from "./pages/Home";
+import Library from "./pages/Library";
 
 function Routes() {
   const { status } = useAuth();
@@ -20,7 +20,10 @@ function Routes() {
 
   return (
     <Switch>
-      <Route path="/" component={Home} />
+      <Route path="/library" component={Library} />
+      <Route path="/">
+        <Redirect to="/library" />
+      </Route>
     </Switch>
   );
 }

@@ -67,3 +67,35 @@ export function submitOtp(pendingId: string, otp: string, marketplace: string) {
 export function logout() {
   return apiFetch(z.object({ message: z.string() }), "/audible/auth/logout", { method: "POST" });
 }
+
+// ---------------------------------------------------------------------------
+// Library
+// ---------------------------------------------------------------------------
+
+export const BookSchema = z.object({
+  asin: z.string(),
+  title: z.string(),
+  subtitle: z.string().nullable(),
+  authors: z.array(z.string()),
+  narrators: z.array(z.string()),
+  coverUrl: z.string().nullable(),
+  runtimeMinutes: z.number().nullable(),
+  purchaseDate: z.string().nullable(),
+  seriesTitle: z.string().nullable(),
+  seriesPosition: z.string().nullable(),
+  releaseDate: z.string().nullable(),
+  description: z.string().nullable(),
+  status: z.enum(["available", "downloaded", "downloading"]),
+});
+export type Book = z.infer<typeof BookSchema>;
+
+const LibraryResponseSchema = z.object({
+  books: z.array(BookSchema),
+  total: z.number(),
+  page: z.number(),
+  pageSize: z.number(),
+});
+
+export function fetchLibrary(page = 1, pageSize = 50) {
+  return apiFetch(LibraryResponseSchema, `/audible/library?page=${page}&pageSize=${pageSize}`);
+}
