@@ -37,7 +37,7 @@ Detailed plan: `plans/02-library.md`
 Capture / retrieve activation bytes. Store encrypted locally. Without this, DRM strip fails.
 Detailed plan: `plans/03-activation-bytes.md`
 
-### [ ] 04 — Download one book
+### [x] 04 — Download one book
 Fetch `.aax` / `.aaxc` to local storage (OPFS on web). Progress bar. Resume on failure. Verify file on disk before marking done.
 Detailed plan: `plans/04-download.md`
 

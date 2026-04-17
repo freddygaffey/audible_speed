@@ -101,6 +101,35 @@ export function fetchLibrary(page = 1, pageSize = 50) {
 }
 
 // ---------------------------------------------------------------------------
+// Downloads
+// ---------------------------------------------------------------------------
+
+export const DownloadJobSchema = z.object({
+  id: z.string(),
+  asin: z.string(),
+  title: z.string(),
+  status: z.enum(["queued", "downloading", "converting", "done", "error"]),
+  progress: z.number(),
+  format: z.string(),
+  outputPath: z.string().nullable(),
+  error: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type DownloadJob = z.infer<typeof DownloadJobSchema>;
+
+export function startDownload(asin: string, title: string, format: "mp3" | "m4b" = "m4b") {
+  return apiFetch(DownloadJobSchema, "/audible/download", {
+    method: "POST",
+    body: JSON.stringify({ asin, title, format }),
+  });
+}
+
+export function listDownloadJobs() {
+  return apiFetch(z.array(DownloadJobSchema), "/audible/downloads");
+}
+
+// ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
 

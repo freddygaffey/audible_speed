@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { Clock, BookOpen, WifiOff, Settings } from "lucide-react";
+import { Clock, BookOpen, WifiOff, Settings, Download, CheckCircle, Loader2 } from "lucide-react";
 import { Link } from "wouter";
-import { fetchLibrary, type Book } from "../lib/apiClient";
+import { fetchLibrary, type Book, type DownloadJob } from "../lib/apiClient";
 import { saveLibrary, loadLibrary } from "../lib/libraryCache";
+import { useDownloads } from "../hooks/useDownloads";
 
 function formatRuntime(minutes: number | null) {
   if (!minutes) return null;
@@ -11,9 +12,69 @@ function formatRuntime(minutes: number | null) {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
-function BookCard({ book }: { book: Book }) {
+function DownloadButton({ book, job, onDownload }: {
+  book: Book;
+  job: DownloadJob | undefined;
+  onDownload: () => void;
+}) {
+  if (job?.status === "done" || book.status === "downloaded") {
+    return (
+      <div className="flex items-center gap-1 text-xs text-green-400">
+        <CheckCircle className="h-3.5 w-3.5" />
+        Downloaded
+      </div>
+    );
+  }
+
+  if (job && ["queued", "downloading", "converting"].includes(job.status)) {
+    return (
+      <div className="space-y-1">
+        <div className="flex items-center gap-1 text-xs text-orange-400">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          {job.status === "converting" ? "Converting…" : `${job.progress}%`}
+        </div>
+        <div className="h-1 w-full overflow-hidden rounded-full bg-gray-700">
+          <div
+            className="h-full rounded-full bg-orange-500 transition-all"
+            style={{ width: `${job.progress}%` }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (job?.status === "error") {
+    return (
+      <button
+        onClick={onDownload}
+        className="text-xs text-red-400 hover:text-red-300"
+        title={job.error ?? "Download failed"}
+      >
+        Retry
+      </button>
+    );
+  }
+
   return (
-    <div className="group flex flex-col gap-2 rounded-xl bg-gray-900 p-3 transition-colors hover:bg-gray-800">
+    <button
+      onClick={onDownload}
+      className="flex items-center gap-1 text-xs text-gray-400 hover:text-orange-400 transition-colors"
+    >
+      <Download className="h-3.5 w-3.5" />
+      Download
+    </button>
+  );
+}
+
+function BookCard({ book, job, onDownload }: {
+  book: Book;
+  job: DownloadJob | undefined;
+  onDownload: () => void;
+}) {
+  const isDone = job?.status === "done" || book.status === "downloaded";
+
+  return (
+    <div className="flex flex-col gap-2 rounded-xl bg-gray-900 p-3 transition-colors hover:bg-gray-800">
       <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-gray-800">
         {book.coverUrl ? (
           <img
@@ -27,21 +88,22 @@ function BookCard({ book }: { book: Book }) {
             <BookOpen className="h-12 w-12 text-gray-600" />
           </div>
         )}
-        {book.status !== "available" && (
-          <div className="absolute bottom-1 right-1 rounded bg-orange-500 px-1.5 py-0.5 text-xs font-medium text-white">
-            {book.status === "downloaded" ? "✓" : "↓"}
+        {isDone && (
+          <div className="absolute bottom-1 right-1 rounded-full bg-green-500/90 p-0.5">
+            <CheckCircle className="h-3.5 w-3.5 text-white" />
           </div>
         )}
       </div>
-      <div className="min-w-0">
+      <div className="min-w-0 space-y-1">
         <p className="truncate text-sm font-medium text-white">{book.title}</p>
         <p className="truncate text-xs text-gray-400">{book.authors.join(", ")}</p>
         {book.runtimeMinutes && (
-          <p className="mt-1 flex items-center gap-1 text-xs text-gray-500">
+          <p className="flex items-center gap-1 text-xs text-gray-500">
             <Clock className="h-3 w-3" />
             {formatRuntime(book.runtimeMinutes)}
           </p>
         )}
+        <DownloadButton book={book} job={job} onDownload={onDownload} />
       </div>
     </div>
   );
@@ -49,6 +111,7 @@ function BookCard({ book }: { book: Book }) {
 
 export default function Library() {
   const cached = loadLibrary();
+  const { byAsin, download } = useDownloads();
 
   const { data, error, isLoading, isFetching } = useQuery({
     queryKey: ["library"],
@@ -73,7 +136,9 @@ export default function Library() {
             {data && (
               <p className="mt-0.5 text-sm text-gray-400">
                 {data.total} {data.total === 1 ? "book" : "books"}
-                {isFetching && !isLoading && <span className="ml-2 text-xs text-gray-500">Refreshing…</span>}
+                {isFetching && !isLoading && (
+                  <span className="ml-2 text-xs text-gray-500">Refreshing…</span>
+                )}
               </p>
             )}
           </div>
@@ -113,7 +178,12 @@ export default function Library() {
         {books.length > 0 && (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
             {books.map((book) => (
-              <BookCard key={book.asin} book={book} />
+              <BookCard
+                key={book.asin}
+                book={book}
+                job={byAsin.get(book.asin)}
+                onDownload={() => download(book.asin, book.title)}
+              />
             ))}
           </div>
         )}
