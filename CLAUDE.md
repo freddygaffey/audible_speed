@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Project objective
+
+The real goal is a **cross-platform app (Capacitor-style, web + iOS + Android from one codebase) that plays Audible audiobooks at up to 16× speed**, bypassing Audible's native 3.5× cap. See `FEATURES.md` for the scoped feature list and `FRAMEWORK.md` for the framework decision and rationale.
+
+The current `artifacts/libation` (React + Vite web) and `artifacts/audiobook-player` (Expo) apps are reference implementations from the original Replit download — **not the shipping target**. The Audible auth / download / DRM-removal code under `artifacts/api-server/src/lib/` is reusable logic. Streaming playback is explicitly rejected; books must be downloaded and played from local storage.
+
 ## Workspace
 
 pnpm workspace monorepo on Node 24 / TypeScript 5.9. Packages live in `artifacts/*` (deployable apps) and `lib/*` (shared libraries) and resolve each other via `workspace:*`. The root `tsconfig.json` composite-builds the `lib/*` projects only; artifacts typecheck independently. Imports use the `workspace` custom TS condition (see `tsconfig.base.json`) so consumers resolve source files directly from sibling packages without a build step.
