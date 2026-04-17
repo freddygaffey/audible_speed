@@ -41,7 +41,7 @@ Detailed plan: `plans/03-activation-bytes.md`
 Fetch `.aax` / `.aaxc` to local storage (OPFS on web). Progress bar. Resume on failure. Verify file on disk before marking done.
 Detailed plan: `plans/04-download.md`
 
-### [ ] 05 — DRM strip via ffmpeg.wasm
+### [x] 05 — DRM strip via ffmpeg.wasm
 Run `ffmpeg -activation_bytes <hex> -i in.aax -c:a copy out.m4b` in the browser. Output plays in a raw `<audio>` tag. No UI yet.
 Detailed plan: `plans/05-drm-strip.md`
 

@@ -2,6 +2,7 @@ import { Route, Switch, Redirect } from "wouter";
 import { AuthProvider, useAuth } from "./lib/authContext";
 import Auth from "./pages/Auth";
 import Library from "./pages/Library";
+import Player from "./pages/Player";
 import Settings from "./pages/Settings";
 
 function Routes() {
@@ -22,6 +23,7 @@ function Routes() {
   return (
     <Switch>
       <Route path="/library" component={Library} />
+      <Route path="/player/:asin" component={Player} />
       <Route path="/settings" component={Settings} />
       <Route path="/">
         <Redirect to="/library" />

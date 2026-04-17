@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { Clock, BookOpen, WifiOff, Settings, Download, CheckCircle, Loader2 } from "lucide-react";
-import { Link } from "wouter";
+import { Clock, BookOpen, WifiOff, Settings, Download, CheckCircle, Loader2, Play } from "lucide-react";
+import { Link, useLocation } from "wouter";
 import { fetchLibrary, type Book, type DownloadJob } from "../lib/apiClient";
 import { saveLibrary, loadLibrary } from "../lib/libraryCache";
 import { useDownloads } from "../hooks/useDownloads";
@@ -19,10 +19,14 @@ function DownloadButton({ book, job, onDownload }: {
 }) {
   if (job?.status === "done" || book.status === "downloaded") {
     return (
-      <div className="flex items-center gap-1 text-xs text-green-400">
-        <CheckCircle className="h-3.5 w-3.5" />
-        Downloaded
-      </div>
+      <button
+        onClick={onDownload}
+        className="flex items-center gap-1 text-xs text-green-400 hover:text-orange-400 transition-colors"
+        title="Play"
+      >
+        <Play className="h-3.5 w-3.5" />
+        Play
+      </button>
     );
   }
 
@@ -112,6 +116,7 @@ function BookCard({ book, job, onDownload }: {
 export default function Library() {
   const cached = loadLibrary();
   const { byAsin, download } = useDownloads();
+  const [, navigate] = useLocation();
 
   const { data, error, isLoading, isFetching } = useQuery({
     queryKey: ["library"],
@@ -177,14 +182,20 @@ export default function Library() {
 
         {books.length > 0 && (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-            {books.map((book) => (
+            {books.map((book) => {
+              const job = byAsin.get(book.asin);
+              const isDone = job?.status === "done" || book.status === "downloaded";
+              return (
               <BookCard
                 key={book.asin}
                 book={book}
-                job={byAsin.get(book.asin)}
-                onDownload={() => download(book.asin, book.title)}
+                job={job}
+                onDownload={isDone
+                  ? () => navigate(`/player/${book.asin}`)
+                  : () => download(book.asin, book.title)}
               />
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
