@@ -57,7 +57,7 @@ Detailed plan: `plans/07-speed.md`
 Add native shells. Swap web shims: storage → Filesystem plugin, ffmpeg.wasm → native ffmpeg plugin. One build per platform runs a previously-downloaded book end-to-end.
 Detailed plan: `plans/08-capacitor-wrap.md`
 
-### [ ] 09 — Background playback
+### [x] 09 — Background playback
 Lock-screen controls, continue playing when screen off, resume on app foreground. iOS + Android specifics diverge here.
 Detailed plan: `plans/09-background-playback.md`
 

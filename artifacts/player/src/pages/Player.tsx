@@ -41,6 +41,22 @@ export default function Player() {
   const job = byAsin.get(asin);
   const book = getBook(asin);
   const fileUrl = job?.status === "done" ? `/api/audible/download/${job.id}/file` : null;
+  const title = book?.title ?? job?.title ?? "Audiobook";
+  const author = book?.authors.join(", ") ?? "";
+  const coverUrl = book?.coverUrl ?? null;
+
+  const skip = useCallback((seconds: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.currentTime = Math.max(0, Math.min(duration, audio.currentTime + seconds));
+  }, [duration]);
+
+  const togglePlay = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) void audio.play();
+    else audio.pause();
+  }, []);
 
   // Apply speed + preservesPitch when audio or speed changes
   useEffect(() => {
@@ -53,13 +69,48 @@ export default function Player() {
     localStorage.setItem(SPEED_KEY, String(speed));
   }, [speed]);
 
+  // Set MediaSession metadata for lock-screen controls
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title,
+      artist: author,
+      artwork: coverUrl ? [{ src: coverUrl, sizes: "500x500", type: "image/jpeg" }] : [],
+    });
+    navigator.mediaSession.setActionHandler("play", () => audioRef.current?.play());
+    navigator.mediaSession.setActionHandler("pause", () => audioRef.current?.pause());
+    navigator.mediaSession.setActionHandler("seekbackward", () => skip(-30));
+    navigator.mediaSession.setActionHandler("seekforward", () => skip(30));
+    return () => {
+      navigator.mediaSession.setActionHandler("play", null);
+      navigator.mediaSession.setActionHandler("pause", null);
+      navigator.mediaSession.setActionHandler("seekbackward", null);
+      navigator.mediaSession.setActionHandler("seekforward", null);
+    };
+  }, [title, author, coverUrl, skip]);
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    const onTime = () => setCurrentTime(audio.currentTime);
+    const onTime = () => {
+      setCurrentTime(audio.currentTime);
+      if ("mediaSession" in navigator && duration > 0) {
+        navigator.mediaSession.setPositionState({
+          duration,
+          playbackRate: speed,
+          position: audio.currentTime,
+        });
+      }
+    };
     const onLoaded = () => { setDuration(audio.duration); audio.playbackRate = speed; };
-    const onPlay = () => setPlaying(true);
-    const onPause = () => setPlaying(false);
+    const onPlay = () => {
+      setPlaying(true);
+      if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
+    };
+    const onPause = () => {
+      setPlaying(false);
+      if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
+    };
     audio.addEventListener("timeupdate", onTime);
     audio.addEventListener("loadedmetadata", onLoaded);
     audio.addEventListener("play", onPlay);
@@ -70,20 +121,7 @@ export default function Player() {
       audio.removeEventListener("play", onPlay);
       audio.removeEventListener("pause", onPause);
     };
-  }, [speed]);
-
-  const togglePlay = useCallback(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (audio.paused) void audio.play();
-    else audio.pause();
-  }, []);
-
-  const skip = useCallback((seconds: number) => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.currentTime = Math.max(0, Math.min(duration, audio.currentTime + seconds));
-  }, [duration]);
+  }, [speed, duration]);
 
   function changeSpeed(delta: number) {
     const nextIdx = Math.max(0, Math.min(SPEED_STEPS.length - 1, speedIdx + delta));
@@ -107,10 +145,6 @@ export default function Player() {
       </div>
     );
   }
-
-  const title = book?.title ?? job?.title ?? "Audiobook";
-  const author = book?.authors.join(", ") ?? "";
-  const coverUrl = book?.coverUrl;
 
   return (
     <div className="flex min-h-screen flex-col bg-gray-950 text-white">
