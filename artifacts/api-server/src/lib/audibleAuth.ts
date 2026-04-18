@@ -211,26 +211,34 @@ export function buildLoginUrl(marketplace: string): string {
   return `https://${cfg.domain}/ap/signin?${params}`;
 }
 
+function generateSerial(): string {
+  return crypto.randomBytes(20).toString("hex"); // 40-char hex, matches device serial format
+}
+
 export async function initLogin(marketplace: string): Promise<{ pendingId: string; loginUrl: string }> {
   prune();
   const cfg = MARKETPLACES[marketplace] ?? MARKETPLACES.us;
   const { codeVerifier, codeChallenge } = generatePKCE();
   const returnTo = `https://${cfg.domain}/ap/maplanding`;
+  const serial = generateSerial();
 
   const params = new URLSearchParams({
-    "openid.pape.preferred_auth_policies": "MultiFactor",
+    "openid.ns": "http://specs.openid.net/auth/2.0",
+    "openid.identity": "http://specs.openid.net/auth/2.0/identifier_select",
     "openid.claimed_id": "http://specs.openid.net/auth/2.0/identifier_select",
-    "pageId": cfg.assocHandle,
     "openid.mode": "checkid_setup",
     "openid.ns.pape": "http://specs.openid.net/extensions/pape/1.0",
-    "openid.identity": "http://specs.openid.net/auth/2.0/identifier_select",
-    "openid.assoc_handle": cfg.assocHandle,
-    "openid.return_to": returnTo,
-    "openid.ns": "http://specs.openid.net/auth/2.0",
     "openid.pape.max_auth_age": "0",
+    "openid.pape.preferred_auth_policies": "MultiFactor",
+    "openid.return_to": returnTo,
+    "openid.assoc_handle": cfg.assocHandle,
+    "openid.oa2.client_id": `device:${serial}`,
+    "openid.oa2.response_type": "code",
     "openid.oa2.code_challenge_method": "S256",
     "openid.oa2.code_challenge": codeChallenge,
-    "openid.oa2.response_type": "code",
+    "pageId": cfg.assocHandle,
+    "accountStatusPolicy": "P1",
+    "language": "en-US",
   });
 
   const loginUrl = `https://${cfg.domain}/ap/signin?${params}`;
