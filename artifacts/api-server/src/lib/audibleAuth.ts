@@ -123,9 +123,11 @@ function extractHiddenFields(html: string): Record<string, string> {
   return fields;
 }
 
-function extractFormAction(html: string, fallback: string): string {
+function extractFormAction(html: string, fallback: string, domain?: string): string {
   const m = /action=["']([^"']+)["']/.exec(html);
-  return m ? (m[1].startsWith("http") ? m[1] : `https://www.amazon.com${m[1]}`) : fallback;
+  if (!m) return fallback;
+  if (m[1].startsWith("http")) return m[1];
+  return `https://${domain ?? "www.amazon.com"}${m[1]}`;
 }
 
 function extractInputByName(html: string, name: string): string {
@@ -185,7 +187,7 @@ export async function fetchLoginPage(
   const html = await resp.text();
 
   const hiddenFields = extractHiddenFields(html);
-  const formAction = extractFormAction(html, `https://${cfg.domain}/ap/signin`);
+  const formAction = extractFormAction(html, `https://${cfg.domain}/ap/signin`, cfg.domain);
 
   const pendingId = makePendingId();
   pendingLogins.set(pendingId, {
@@ -257,12 +259,12 @@ export async function submitCredentials(
   const html = await resp.text();
   const pageType = detectPage(html, resp.url);
 
-  logger.debug({ pageType, url: resp.url, status: resp.status, htmlSnippet: html.slice(0, 500) }, "submitCredentials page");
+  logger.debug({ pageType, formAction: pending.formAction, url: resp.url, status: resp.status, cookieCount: Object.keys(parseCookies(pending.cookies)).length, htmlSnippet: html.slice(0, 800) }, "submitCredentials page");
 
   if (pageType === "otp") {
     // Extract OTP form details
     const otpFields = extractHiddenFields(html);
-    const otpAction = extractFormAction(html, `https://${pending.domain}/ap/cvf/verify`);
+    const otpAction = extractFormAction(html, `https://${pending.domain}/ap/cvf/verify`, pending.domain);
     pending.hiddenFields = otpFields;
     pending.formAction = otpAction;
     return { status: "otp", pendingId };
@@ -314,7 +316,7 @@ async function followRedirect(url: string, pending: PendingLogin, pendingId: str
 
   if (pageType === "otp") {
     pending.hiddenFields = extractHiddenFields(html);
-    pending.formAction = extractFormAction(html, `https://${pending.domain}/ap/cvf/verify`);
+    pending.formAction = extractFormAction(html, `https://${pending.domain}/ap/cvf/verify`, pending.domain);
     return { status: "otp", pendingId };
   }
 
