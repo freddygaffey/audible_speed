@@ -5,6 +5,8 @@ import {
   fetchLoginPage,
   submitCredentials,
   submitOtp,
+  initLogin,
+  completeFromUrl,
   getSession,
   setSession,
   clearSession,
@@ -141,18 +143,9 @@ router.post("/audible/auth/debug-login", async (req, res): Promise<void> => {
 // Auth — server-side login (no client_id needed, uses Audible iOS UA)
 // ---------------------------------------------------------------------------
 
-// POST /audible/auth/login  — start login with email + password
+// POST /audible/auth/login  — generate Amazon login URL (browser-based PKCE flow)
 router.post("/audible/auth/login", async (req, res): Promise<void> => {
-  const { email, password, marketplace = "us" } = req.body as {
-    email?: string;
-    password?: string;
-    marketplace?: string;
-  };
-
-  if (!email || !password) {
-    res.status(400).json({ error: "email and password are required" });
-    return;
-  }
+  const { marketplace = "us" } = req.body as { marketplace?: string };
 
   if (!MARKETPLACES[marketplace]) {
     res.status(400).json({ error: `Unknown marketplace: ${marketplace}` });
@@ -160,8 +153,29 @@ router.post("/audible/auth/login", async (req, res): Promise<void> => {
   }
 
   try {
-    const { pendingId } = await fetchLoginPage(marketplace);
-    const result = await submitCredentials(pendingId, email, password);
+    const { pendingId, loginUrl } = await initLogin(marketplace);
+    res.json({ loginUrl, pendingId });
+  } catch (err: any) {
+    req.log.error({ err: err.message }, "initLogin failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /audible/auth/complete-url  — complete login from pasted maplanding URL
+router.post("/audible/auth/complete-url", async (req, res): Promise<void> => {
+  const { pendingId, maplandingUrl, marketplace = "us" } = req.body as {
+    pendingId?: string;
+    maplandingUrl?: string;
+    marketplace?: string;
+  };
+
+  if (!pendingId || !maplandingUrl) {
+    res.status(400).json({ error: "pendingId and maplandingUrl are required" });
+    return;
+  }
+
+  try {
+    const result = await completeFromUrl(pendingId, maplandingUrl);
 
     if (result.status === "success") {
       setSession({
@@ -172,17 +186,13 @@ router.post("/audible/auth/login", async (req, res): Promise<void> => {
         email: result.email,
         marketplace,
       });
-      req.log.info({ username: result.username, marketplace }, "Audible login success");
+      req.log.info({ username: result.username, marketplace }, "Audible login complete");
       res.json({ status: "success", username: result.username, email: result.email, marketplace });
-    } else if (result.status === "otp") {
-      res.json({ status: "otp", pendingId: result.pendingId });
-    } else if (result.status === "captcha") {
-      res.status(503).json({ status: "captcha", error: result.message });
     } else {
-      res.status(401).json({ status: "error", error: result.message });
+      res.status(401).json({ status: "error", error: (result as any).message ?? "Auth failed" });
     }
   } catch (err: any) {
-    req.log.error({ err: err.message }, "Login failed");
+    req.log.error({ err: err.message }, "complete-url failed");
     res.status(500).json({ error: err.message });
   }
 });

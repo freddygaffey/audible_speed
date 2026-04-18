@@ -151,6 +151,113 @@ function detectPage(html: string, url: string): PageType {
 // Step 1: Fetch the Amazon login page for the given marketplace
 // ---------------------------------------------------------------------------
 
+// Follow a GET redirect chain manually so we accumulate every Set-Cookie header.
+// fetch(redirect:"follow") silently drops intermediate Set-Cookie headers.
+async function fetchFollowingCookies(
+  startUrl: string,
+  headers: Record<string, string>,
+  accumCookies: string[] = [],
+  depth = 0
+): Promise<{ html: string; finalUrl: string; cookies: string[] }> {
+  if (depth > 10) throw new Error("Too many redirects");
+
+  const cookieHeader = cookieJarToHeader(parseCookies(accumCookies));
+  const resp = await fetch(startUrl, {
+    method: "GET",
+    redirect: "manual",
+    headers: { ...headers, ...(cookieHeader ? { Cookie: cookieHeader } : {}) },
+  });
+
+  const newCookies = resp.headers.getSetCookie?.() ?? [];
+  const merged = mergeCookies(accumCookies, newCookies);
+
+  if ((resp.status === 301 || resp.status === 302 || resp.status === 303) && resp.headers.get("location")) {
+    const location = resp.headers.get("location")!;
+    const next = location.startsWith("http") ? location : `${new URL(startUrl).origin}${location}`;
+    logger.debug({ from: startUrl, to: next, cookiesGained: newCookies.length, depth }, "fetchLoginPage redirect");
+    return fetchFollowingCookies(next, headers, merged, depth + 1);
+  }
+
+  const html = await resp.text();
+  logger.debug({ finalUrl: startUrl, status: resp.status, totalCookies: Object.keys(parseCookies(merged)).length }, "fetchLoginPage landed");
+  return { html, finalUrl: startUrl, cookies: merged };
+}
+
+// ---------------------------------------------------------------------------
+// Browser-based PKCE flow: generate URL without server-side page fetch
+// ---------------------------------------------------------------------------
+
+export function buildLoginUrl(marketplace: string): string {
+  const cfg = MARKETPLACES[marketplace] ?? MARKETPLACES.us;
+  const { codeChallenge } = generatePKCE();
+  const returnTo = `https://${cfg.domain}/ap/maplanding`;
+
+  const params = new URLSearchParams({
+    "openid.pape.preferred_auth_policies": "MultiFactor",
+    "openid.claimed_id": "http://specs.openid.net/auth/2.0/identifier_select",
+    "pageId": cfg.assocHandle,
+    "openid.mode": "checkid_setup",
+    "openid.ns.pape": "http://specs.openid.net/extensions/pape/1.0",
+    "openid.identity": "http://specs.openid.net/auth/2.0/identifier_select",
+    "openid.assoc_handle": cfg.assocHandle,
+    "openid.return_to": returnTo,
+    "openid.ns": "http://specs.openid.net/auth/2.0",
+    "openid.pape.max_auth_age": "0",
+    "openid.oa2.code_challenge_method": "S256",
+    "openid.oa2.code_challenge": codeChallenge,
+    "openid.oa2.response_type": "code",
+  });
+
+  return `https://${cfg.domain}/ap/signin?${params}`;
+}
+
+export async function initLogin(marketplace: string): Promise<{ pendingId: string; loginUrl: string }> {
+  prune();
+  const cfg = MARKETPLACES[marketplace] ?? MARKETPLACES.us;
+  const { codeVerifier, codeChallenge } = generatePKCE();
+  const returnTo = `https://${cfg.domain}/ap/maplanding`;
+
+  const params = new URLSearchParams({
+    "openid.pape.preferred_auth_policies": "MultiFactor",
+    "openid.claimed_id": "http://specs.openid.net/auth/2.0/identifier_select",
+    "pageId": cfg.assocHandle,
+    "openid.mode": "checkid_setup",
+    "openid.ns.pape": "http://specs.openid.net/extensions/pape/1.0",
+    "openid.identity": "http://specs.openid.net/auth/2.0/identifier_select",
+    "openid.assoc_handle": cfg.assocHandle,
+    "openid.return_to": returnTo,
+    "openid.ns": "http://specs.openid.net/auth/2.0",
+    "openid.pape.max_auth_age": "0",
+    "openid.oa2.code_challenge_method": "S256",
+    "openid.oa2.code_challenge": codeChallenge,
+    "openid.oa2.response_type": "code",
+  });
+
+  const loginUrl = `https://${cfg.domain}/ap/signin?${params}`;
+  const pendingId = makePendingId();
+
+  pendingLogins.set(pendingId, {
+    marketplace,
+    domain: cfg.domain,
+    cookies: [],
+    codeVerifier,
+    returnTo,
+    formAction: loginUrl,
+    hiddenFields: {},
+    createdAt: Date.now(),
+  });
+
+  logger.debug({ marketplace, pendingId }, "initLogin: generated login URL");
+  return { pendingId, loginUrl };
+}
+
+export async function completeFromUrl(pendingId: string, maplandingUrl: string): Promise<LoginResult> {
+  const pending = pendingLogins.get(pendingId);
+  if (!pending) return { status: "error", message: "Login session expired. Please try again." };
+  pendingLogins.delete(pendingId);
+  return handleMaplandingRedirect(maplandingUrl, pending);
+}
+
 export async function fetchLoginPage(
   marketplace: string
 ): Promise<{ pendingId: string }> {
@@ -177,23 +284,21 @@ export async function fetchLoginPage(
 
   const loginUrl = `https://${cfg.domain}/ap/signin?${params}`;
 
-  const resp = await fetch(loginUrl, {
-    method: "GET",
-    redirect: "follow",
-    headers: { "User-Agent": IOS_UA, "Accept-Language": "en-US,en;q=0.9" },
+  const { html, cookies } = await fetchFollowingCookies(loginUrl, {
+    "User-Agent": IOS_UA,
+    "Accept-Language": "en-US,en;q=0.9",
   });
-
-  const setCookies = resp.headers.getSetCookie?.() ?? [];
-  const html = await resp.text();
 
   const hiddenFields = extractHiddenFields(html);
   const formAction = extractFormAction(html, `https://${cfg.domain}/ap/signin`, cfg.domain);
+
+  logger.debug({ formAction, fieldNames: Object.keys(hiddenFields), cookieCount: Object.keys(parseCookies(cookies)).length }, "fetchLoginPage done");
 
   const pendingId = makePendingId();
   pendingLogins.set(pendingId, {
     marketplace,
     domain: cfg.domain,
-    cookies: setCookies,
+    cookies,
     codeVerifier,
     returnTo,
     formAction,

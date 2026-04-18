@@ -32,16 +32,12 @@ const LoginSuccessSchema = z.object({
   email: z.string(),
   marketplace: z.string(),
 });
-const LoginOtpSchema = z.object({ status: z.literal("otp"), pendingId: z.string() });
 const LoginErrorSchema = z.object({ status: z.literal("error"), error: z.string() });
-const LoginCaptchaSchema = z.object({ status: z.literal("captcha"), error: z.string() });
-const LoginResultSchema = z.discriminatedUnion("status", [
-  LoginSuccessSchema,
-  LoginOtpSchema,
-  LoginErrorSchema,
-  LoginCaptchaSchema,
-]);
+const LoginResultSchema = z.discriminatedUnion("status", [LoginSuccessSchema, LoginErrorSchema]);
 export type LoginResult = z.infer<typeof LoginResultSchema>;
+
+const InitLoginSchema = z.object({ loginUrl: z.string(), pendingId: z.string() });
+export type InitLoginResult = z.infer<typeof InitLoginSchema>;
 
 // ---------------------------------------------------------------------------
 // Auth API calls
@@ -51,17 +47,17 @@ export function getAuthStatus() {
   return apiFetch(AuthStatusSchema, "/audible/auth/status");
 }
 
-export function login(email: string, password: string, marketplace: string) {
-  return apiFetch(LoginResultSchema, "/audible/auth/login", {
+export function initLogin(marketplace: string) {
+  return apiFetch(InitLoginSchema, "/audible/auth/login", {
     method: "POST",
-    body: JSON.stringify({ email, password, marketplace }),
+    body: JSON.stringify({ marketplace }),
   });
 }
 
-export function submitOtp(pendingId: string, otp: string, marketplace: string) {
-  return apiFetch(LoginResultSchema, "/audible/auth/otp", {
+export function completeFromUrl(pendingId: string, maplandingUrl: string, marketplace: string) {
+  return apiFetch(LoginResultSchema, "/audible/auth/complete-url", {
     method: "POST",
-    body: JSON.stringify({ pendingId, otp, marketplace }),
+    body: JSON.stringify({ pendingId, maplandingUrl, marketplace }),
   });
 }
 
