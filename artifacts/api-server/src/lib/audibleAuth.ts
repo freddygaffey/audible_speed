@@ -222,26 +222,29 @@ export async function initLogin(marketplace: string): Promise<{ pendingId: strin
   const returnTo = `https://${cfg.domain}/ap/maplanding`;
   const serial = generateSerial();
 
-  const params = new URLSearchParams({
-    "openid.ns": "http://specs.openid.net/auth/2.0",
-    "openid.identity": "http://specs.openid.net/auth/2.0/identifier_select",
-    "openid.claimed_id": "http://specs.openid.net/auth/2.0/identifier_select",
-    "openid.mode": "checkid_setup",
-    "openid.ns.pape": "http://specs.openid.net/extensions/pape/1.0",
-    "openid.pape.max_auth_age": "0",
-    "openid.pape.preferred_auth_policies": "MultiFactor",
-    "openid.return_to": returnTo,
-    "openid.assoc_handle": cfg.assocHandle,
-    "openid.oa2.client_id": `device:${serial}`,
-    "openid.oa2.response_type": "code",
-    "openid.oa2.code_challenge_method": "S256",
-    "openid.oa2.code_challenge": codeChallenge,
-    "pageId": cfg.assocHandle,
-    "accountStatusPolicy": "P1",
-    "language": "en-US",
-  });
+  // URLSearchParams encodes ":" and "/" in values as %3A/%2F.
+  // Amazon's OpenID parser does NOT decode before comparing openid.ns, so it returns 404.
+  // Build the query string manually with raw (unencoded) URL values, matching Libation/audible-api.
+  const qs = [
+    `openid.ns=http://specs.openid.net/auth/2.0`,
+    `openid.identity=http://specs.openid.net/auth/2.0/identifier_select`,
+    `openid.claimed_id=http://specs.openid.net/auth/2.0/identifier_select`,
+    `openid.mode=checkid_setup`,
+    `openid.ns.pape=http://specs.openid.net/extensions/pape/1.0`,
+    `openid.pape.max_auth_age=0`,
+    `openid.pape.preferred_auth_policies=MultiFactor`,
+    `openid.return_to=${returnTo}`,
+    `openid.assoc_handle=${cfg.assocHandle}`,
+    `openid.oa2.client_id=device:${serial}`,
+    `openid.oa2.response_type=code`,
+    `openid.oa2.code_challenge_method=S256`,
+    `openid.oa2.code_challenge=${codeChallenge}`,
+    `pageId=${cfg.assocHandle}`,
+    `accountStatusPolicy=P1`,
+    `language=en-US`,
+  ].join("&");
 
-  const loginUrl = `https://${cfg.domain}/ap/signin?${params}`;
+  const loginUrl = `https://${cfg.domain}/ap/signin?${qs}`;
   const pendingId = makePendingId();
 
   pendingLogins.set(pendingId, {
