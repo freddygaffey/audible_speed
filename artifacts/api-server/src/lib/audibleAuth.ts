@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { logger } from "./logger.js";
 
 // ---------------------------------------------------------------------------
 // Marketplace configs — used only for Audible API domain routing after auth
@@ -255,6 +256,8 @@ export async function submitCredentials(
 
   const html = await resp.text();
   const pageType = detectPage(html, resp.url);
+
+  logger.debug({ pageType, url: resp.url, status: resp.status, htmlSnippet: html.slice(0, 500) }, "submitCredentials page");
 
   if (pageType === "otp") {
     // Extract OTP form details
