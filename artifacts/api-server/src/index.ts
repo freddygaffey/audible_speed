@@ -1,5 +1,29 @@
+import dns from "node:dns";
+import { execSync } from "node:child_process";
 import app from "./app";
 import { logger } from "./lib/logger";
+
+// Prefer IPv4 when resolving Audible/CDN — avoids common macOS "fetch failed" when IPv6 routes are broken.
+dns.setDefaultResultOrder("ipv4first");
+
+process.on("unhandledRejection", (reason) => {
+  logger.error({ reason }, "Unhandled promise rejection");
+});
+
+process.on("uncaughtException", (err) => {
+  logger.fatal({ err }, "Uncaught exception");
+  process.exit(1);
+});
+
+try {
+  execSync("python3 -c 'import audible'", { stdio: "pipe" });
+} catch {
+  logger.error("Python package 'audible' not found. Install with:");
+  logger.error(
+    "python3 -m pip install -r artifacts/api-server/requirements.txt",
+  );
+  process.exit(1);
+}
 
 const rawPort = process.env["PORT"];
 

@@ -1,0 +1,87 @@
+# build-windows.yml
+# Reusable workflow that builds the Windows versions of Libation.
+---
+name: build
+
+on:
+  workflow_call:
+    inputs:
+      libation-version:
+        type: string
+        required: true
+      dotnet-version:
+        type: string
+        required: true
+      run-unit-tests:
+        type: boolean
+      publish-r2r:
+        type: boolean
+      retention-days:
+        type: number
+
+jobs:
+  build:
+    name: "Windows-${{ matrix.release_name }}-${{ matrix.architecture }} (${{ matrix.ui }})"
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        ui: [Avalonia]
+        architecture: [x64]
+        release_name: [chardonnay]
+        include:
+          - architecture: x64
+            ui: WinForms
+            release_name: classic
+            prefix: Classic-
+          - architecture: arm64
+            ui: Avalonia
+            release_name: chardonnay
+    steps:
+      - uses: actions/checkout@v6
+      
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+          dotnet-quality: "ga"
+
+      - name: Unit test
+        if: ${{ inputs.run-unit-tests }}
+        working-directory: ./Source
+        run: dotnet test
+        
+      - name: Publish
+        working-directory: ./Source
+        run: |
+          $PUBLISH_ARGS=@(
+            "--runtime", "win-${{ matrix.architecture }}",
+            "--configuration", "Release",
+            "--output", "../bin",
+            "-p:PublishProtocol=FileSystem",
+            "-p:PublishReadyToRun=${{ inputs.publish-r2r }}",
+            "-p:SelfContained=true")            
+          
+          dotnet publish "Libation${{ matrix.ui }}/Libation${{ matrix.ui }}.csproj" $PUBLISH_ARGS
+          dotnet publish "LoadByOS/WindowsConfigApp/WindowsConfigApp.csproj" $PUBLISH_ARGS
+          dotnet publish "LibationCli/LibationCli.csproj" $PUBLISH_ARGS
+          dotnet publish "Hangover${{ matrix.ui }}/Hangover${{ matrix.ui }}.csproj" $PUBLISH_ARGS
+
+      - name: Zip artifact
+        id: zip
+        working-directory: ./bin
+        run: |
+          $delfiles = @(
+            "WindowsConfigApp.exe",
+            "WindowsConfigApp.runtimeconfig.json",
+            "WindowsConfigApp.deps.json")
+          
+          foreach ($file in $delfiles){ if (test-path $file){ Remove-Item $file } }
+          $artifact="${{ matrix.prefix }}Libation.${{ inputs.libation-version }}-windows-${{ matrix.release_name }}-${{ matrix.architecture }}.zip"
+          "artifact=$artifact" >> $env:GITHUB_OUTPUT
+          Compress-Archive -Path * -DestinationPath "$artifact"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.zip.outputs.artifact }}
+          path: ./bin/${{ steps.zip.outputs.artifact }}
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}

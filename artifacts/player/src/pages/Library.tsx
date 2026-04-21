@@ -1,10 +1,22 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Clock, BookOpen, WifiOff, Settings, Download, CheckCircle, Loader2, Play, Search } from "lucide-react";
+import {
+  Clock,
+  BookOpen,
+  WifiOff,
+  Settings,
+  Download,
+  CheckCircle,
+  Loader2,
+  Play,
+  Search,
+  Trash2,
+} from "lucide-react";
 import { Link, useLocation } from "wouter";
-import { fetchLibrary, type Book, type DownloadJob } from "../lib/apiClient";
+import { fetchLibraryAll, type Book, type DownloadJob } from "../lib/apiClient";
 import { saveLibrary, loadLibrary } from "../lib/libraryCache";
 import { useDownloads } from "../hooks/useDownloads";
+import { useAuth } from "../lib/authContext";
 
 type SortMode = "recent" | "az" | "downloaded";
 
@@ -13,6 +25,16 @@ function formatRuntime(minutes: number | null) {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function isNonRetriableDownloadError(errorText: string | null | undefined): boolean {
+  if (!errorText) return false;
+  const msg = errorText.toLowerCase();
+  return (
+    msg.includes("non_audio asset") ||
+    msg.includes("podcastparent") ||
+    msg.includes("must specify either drm_type")
+  );
 }
 
 function DownloadButton({ book, job, onDownload }: {
@@ -40,6 +62,11 @@ function DownloadButton({ book, job, onDownload }: {
           <Loader2 className="h-3 w-3 animate-spin" />
           {job.status === "converting" ? "Converting…" : `${job.progress}%`}
         </div>
+        {job.status === "converting" && (
+          <p className="text-[10px] leading-tight text-gray-500">
+            Re-encoding for playback can take several minutes on long titles; progress stays here until done.
+          </p>
+        )}
         <div className="h-1 w-full overflow-hidden rounded-full bg-gray-700">
           <div
             className="h-full rounded-full bg-orange-500 transition-all"
@@ -51,6 +78,13 @@ function DownloadButton({ book, job, onDownload }: {
   }
 
   if (job?.status === "error") {
+    if (isNonRetriableDownloadError(job.error)) {
+      return (
+        <span className="text-xs text-yellow-400" title={job.error ?? "Not downloadable"}>
+          Not downloadable
+        </span>
+      );
+    }
     return (
       <button
         onClick={onDownload}
@@ -73,10 +107,11 @@ function DownloadButton({ book, job, onDownload }: {
   );
 }
 
-function BookCard({ book, job, onDownload }: {
+function BookCard({ book, job, onDownload, onRemoveDownload }: {
   book: Book;
   job: DownloadJob | undefined;
   onDownload: () => void;
+  onRemoveDownload?: () => void;
 }) {
   const isDone = job?.status === "done" || book.status === "downloaded";
 
@@ -110,7 +145,22 @@ function BookCard({ book, job, onDownload }: {
             {formatRuntime(book.runtimeMinutes)}
           </p>
         )}
-        <DownloadButton book={book} job={job} onDownload={onDownload} />
+        <div className="flex items-center justify-between gap-2">
+          <DownloadButton book={book} job={job} onDownload={onDownload} />
+          {job && onRemoveDownload && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemoveDownload();
+              }}
+              className="flex-shrink-0 rounded p-1 text-gray-500 hover:bg-gray-800 hover:text-red-400"
+              title="Remove from device"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -134,21 +184,34 @@ function sortBooks(books: Book[], mode: SortMode, byAsin: Map<string, DownloadJo
 }
 
 export default function Library() {
-  const cached = loadLibrary();
-  const { byAsin, download } = useDownloads();
+  const { session } = useAuth();
+  const cached = session ? loadLibrary(session) : null;
+  const { jobs, byAsin, download, removeDownload, removeAllDownloads } = useDownloads();
   const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortMode>("recent");
 
+  const accountKey = session ? [session.username, session.marketplace] as const : ["", ""] as const;
+
   const { data, error, isLoading, isFetching } = useQuery({
-    queryKey: ["library"],
+    queryKey: ["library", ...accountKey],
     queryFn: async () => {
-      const result = await fetchLibrary();
-      saveLibrary(result.books, result.total);
+      if (!session) throw new Error("Not signed in");
+      const result = await fetchLibraryAll();
+      saveLibrary(result.books, result.total, session);
       return result;
     },
-    initialData: cached ? { books: cached.books, total: cached.total, page: 1, pageSize: 50 } : undefined,
-    staleTime: 5 * 60 * 1000,
+    enabled: !!session,
+    initialData: cached
+      ? {
+          books: cached.books,
+          total: cached.total,
+          page: 1,
+          pageSize: cached.books.length,
+        }
+      : undefined,
+    staleTime: 60 * 1000,
+    refetchOnMount: "always",
   });
 
   const isOffline = !!error && !!cached;
@@ -170,8 +233,8 @@ export default function Library() {
     <div className="min-h-screen bg-gray-950 px-4 pb-8 pt-6">
       <div className="mx-auto max-w-5xl">
         {/* Header */}
-        <div className="mb-4 flex items-center justify-between">
-          <div>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
             <h1 className="text-2xl font-bold text-white">My Library</h1>
             {data && (
               <p className="mt-0.5 text-sm text-gray-400">
@@ -184,10 +247,28 @@ export default function Library() {
                 )}
               </p>
             )}
+            {jobs.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (
+                    !confirm(
+                      "Remove every downloaded file from this server? Active downloads will be cancelled. This cannot be undone.",
+                    )
+                  ) {
+                    return;
+                  }
+                  void removeAllDownloads();
+                }}
+                className="mt-2 text-left text-xs text-gray-500 hover:text-red-400"
+              >
+                Remove all downloads…
+              </button>
+            )}
           </div>
           <Link
             href="/settings"
-            className="rounded-lg p-2 text-gray-400 hover:bg-gray-800 hover:text-white"
+            className="flex-shrink-0 rounded-lg p-2 text-gray-400 hover:bg-gray-800 hover:text-white"
           >
             <Settings className="h-5 w-5" />
           </Link>
@@ -258,6 +339,18 @@ export default function Library() {
                   onDownload={isDone
                     ? () => navigate(`/player/${book.asin}`)
                     : () => download(book.asin, book.title)}
+                  onRemoveDownload={
+                    job
+                      ? () => {
+                          const label =
+                            job.status === "done" || book.status === "downloaded"
+                              ? `Remove "${book.title}" from this device?`
+                              : `Cancel download and delete partial files for "${book.title}"?`;
+                          if (!confirm(label)) return;
+                          void removeDownload(book.asin);
+                        }
+                      : undefined
+                  }
                 />
               );
             })}

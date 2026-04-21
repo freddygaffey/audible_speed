@@ -3,9 +3,12 @@ import { useParams, useLocation } from "wouter";
 import { ArrowLeft, Play, Pause, SkipBack, SkipForward, BookOpen } from "lucide-react";
 import { useDownloads } from "../hooks/useDownloads";
 import { getBook } from "../lib/libraryCache";
+import { useAuth } from "../lib/authContext";
+import { getApiBaseUrl } from "../lib/platformConfig";
 
-// 17-step speed ladder matching the Expo player reference
-const SPEED_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 8, 10, 12, 14, 16];
+const SPEED_MIN = 0.5;
+const SPEED_MAX = 16;
+const SPEED_STEP = 0.1;
 const SPEED_KEY = "speed_player_speed";
 
 function formatTime(seconds: number): string {
@@ -17,14 +20,24 @@ function formatTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+function clampSpeed(speed: number): number {
+  return Math.max(SPEED_MIN, Math.min(SPEED_MAX, speed));
+}
+
+function quantizeSpeed(speed: number): number {
+  return Math.round(speed / SPEED_STEP) * SPEED_STEP;
+}
+
 function loadSavedSpeed(): number {
   const saved = parseFloat(localStorage.getItem(SPEED_KEY) ?? "");
-  return SPEED_STEPS.includes(saved) ? saved : 1;
+  if (!isFinite(saved)) return 1;
+  return clampSpeed(quantizeSpeed(saved));
 }
 
 export default function Player() {
   const params = useParams<{ asin: string }>();
   const [, navigate] = useLocation();
+  const { session } = useAuth();
   const { byAsin } = useDownloads();
   const audioRef = useRef<HTMLAudioElement>(null);
 
@@ -32,15 +45,13 @@ export default function Player() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [speed, setSpeed] = useState(loadSavedSpeed);
-  const [speedIdx, setSpeedIdx] = useState(() => {
-    const s = loadSavedSpeed();
-    return SPEED_STEPS.indexOf(s) === -1 ? 2 : SPEED_STEPS.indexOf(s);
-  });
+  const [mediaError, setMediaError] = useState<string | null>(null);
 
   const asin = params.asin ?? "";
   const job = byAsin.get(asin);
-  const book = getBook(asin);
-  const fileUrl = job?.status === "done" ? `/api/audible/download/${job.id}/file` : null;
+  const book = session ? getBook(asin, session) : null;
+  const fileUrl =
+    job?.status === "done" ? `${getApiBaseUrl()}/audible/download/${job.id}/file` : null;
   const title = book?.title ?? job?.title ?? "Audiobook";
   const author = book?.authors.join(", ") ?? "";
   const coverUrl = book?.coverUrl ?? null;
@@ -54,8 +65,14 @@ export default function Player() {
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    if (audio.paused) void audio.play();
-    else audio.pause();
+    if (audio.paused) {
+      void audio.play().catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        setMediaError(msg || "Playback failed");
+      });
+    } else {
+      audio.pause();
+    }
   }, []);
 
   // Apply speed + preservesPitch when audio or speed changes
@@ -91,7 +108,8 @@ export default function Player() {
 
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio) return;
+    if (!audio || !fileUrl) return;
+
     const onTime = () => {
       setCurrentTime(audio.currentTime);
       if ("mediaSession" in navigator && duration > 0) {
@@ -102,7 +120,12 @@ export default function Player() {
         });
       }
     };
-    const onLoaded = () => { setDuration(audio.duration); audio.playbackRate = speed; };
+    const onLoaded = () => {
+      const d = audio.duration;
+      setDuration(Number.isFinite(d) && d > 0 ? d : 0);
+      audio.playbackRate = speed;
+      setMediaError(null);
+    };
     const onPlay = () => {
       setPlaying(true);
       if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
@@ -111,22 +134,38 @@ export default function Player() {
       setPlaying(false);
       if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
     };
+    const onError = () => {
+      const err = audio.error;
+      const code = err?.code;
+      const map: Record<number, string> = {
+        1: "Playback aborted",
+        2: "Network error loading audio",
+        3:
+          "Decode error — this file may be an older download. Remove it from the library and download again (new copies use a browser-safe format).",
+        4: "Format not supported",
+      };
+      setMediaError(map[code ?? 0] ?? err?.message ?? "Could not load audio");
+      setPlaying(false);
+    };
+
     audio.addEventListener("timeupdate", onTime);
     audio.addEventListener("loadedmetadata", onLoaded);
+    audio.addEventListener("durationchange", onLoaded);
     audio.addEventListener("play", onPlay);
     audio.addEventListener("pause", onPause);
+    audio.addEventListener("error", onError);
     return () => {
       audio.removeEventListener("timeupdate", onTime);
       audio.removeEventListener("loadedmetadata", onLoaded);
+      audio.removeEventListener("durationchange", onLoaded);
       audio.removeEventListener("play", onPlay);
       audio.removeEventListener("pause", onPause);
+      audio.removeEventListener("error", onError);
     };
-  }, [speed, duration]);
+  }, [speed, duration, fileUrl]);
 
   function changeSpeed(delta: number) {
-    const nextIdx = Math.max(0, Math.min(SPEED_STEPS.length - 1, speedIdx + delta));
-    setSpeedIdx(nextIdx);
-    setSpeed(SPEED_STEPS[nextIdx]);
+    setSpeed((prev) => clampSpeed(quantizeSpeed(prev + delta)));
   }
 
   function onSeekbar(e: React.ChangeEvent<HTMLInputElement>) {
@@ -178,6 +217,10 @@ export default function Player() {
           )}
         </div>
 
+        {mediaError && (
+          <p className="max-w-sm text-center text-sm text-red-400">{mediaError}</p>
+        )}
+
         {/* Progress */}
         <div className="w-full max-w-sm space-y-1">
           <input
@@ -217,43 +260,53 @@ export default function Player() {
         </div>
 
         {/* Speed control */}
-        <div className="flex items-center gap-3">
+        <div className="w-full max-w-sm space-y-2">
+          <div className="flex items-center justify-center gap-3">
           <button
-            onClick={() => changeSpeed(-1)}
-            disabled={speedIdx === 0}
+            onClick={() => changeSpeed(-SPEED_STEP)}
+            disabled={speed <= SPEED_MIN}
             className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-700 text-sm text-gray-400 hover:border-gray-500 hover:text-white disabled:opacity-30"
           >
             −
           </button>
           <div className="w-14 text-center">
-            <span className="text-lg font-bold text-orange-400">{speed}×</span>
+            <span className="text-lg font-bold text-orange-400">{speed.toFixed(1)}×</span>
           </div>
           <button
-            onClick={() => changeSpeed(1)}
-            disabled={speedIdx === SPEED_STEPS.length - 1}
+            onClick={() => changeSpeed(SPEED_STEP)}
+            disabled={speed >= SPEED_MAX}
             className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-700 text-sm text-gray-400 hover:border-gray-500 hover:text-white disabled:opacity-30"
           >
             +
           </button>
         </div>
-
-        {/* Speed step dots */}
-        <div className="flex gap-1">
-          {SPEED_STEPS.map((s, i) => (
-            <button
-              key={s}
-              onClick={() => { setSpeedIdx(i); setSpeed(s); }}
-              className={`h-1.5 rounded-full transition-all ${
-                i === speedIdx ? "w-4 bg-orange-500" : "w-1.5 bg-gray-700 hover:bg-gray-500"
-              }`}
-              title={`${s}×`}
-            />
-          ))}
+          <input
+            type="range"
+            min={SPEED_MIN}
+            max={SPEED_MAX}
+            step={SPEED_STEP}
+            value={speed}
+            onChange={(e) => {
+              setSpeed(clampSpeed(quantizeSpeed(Number(e.target.value))));
+            }}
+            className="w-full cursor-pointer accent-orange-500"
+            aria-label="Playback speed"
+          />
+          <div className="flex justify-between text-[10px] text-gray-500">
+            <span>{SPEED_MIN.toFixed(1)}×</span>
+            <span>{SPEED_MAX.toFixed(1)}×</span>
+          </div>
         </div>
       </div>
 
-      {/* Hidden audio element */}
-      <audio ref={audioRef} src={fileUrl} preload="metadata" />
+      {/* Hidden audio element — key forces reload when job/url changes; playsInline helps iOS WebView */}
+      <audio
+        ref={audioRef}
+        key={fileUrl}
+        src={fileUrl}
+        preload="metadata"
+        playsInline
+      />
     </div>
   );
 }

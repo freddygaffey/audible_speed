@@ -1,0 +1,68 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:controls="clr-namespace:LibationAvalonia.Controls"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="LibationAvalonia.Controls.DirectoryOrCustomSelectControl">
+	
+    <Grid
+        RowDefinitions="Auto,Auto,Auto"
+        ColumnDefinitions="Auto,*,Auto">
+
+        <RadioButton
+            Grid.RowSpan="2"
+            Name="rbKnown" />
+
+        <TextBlock
+            Grid.Column="1"
+            Grid.ColumnSpan="2"
+            VerticalAlignment="Center"
+            Margin="10,0"
+            IsEnabled="False"
+            IsVisible="{Binding #cmbKnownDirs.SelectedItem, Converter={x:Static ObjectConverters.IsNull}}"
+            Text="Select Known Directory:" />
+
+		<controls:WheelComboBox
+            Grid.Column="1"
+            Grid.ColumnSpan="2"
+            HorizontalAlignment="Stretch"
+            Margin="0,0,0,3"
+            IsEnabled="{Binding #rbKnown.IsChecked}"
+            Name="cmbKnownDirs" />
+
+        <TextBox
+            Grid.Row="1"
+            Grid.Column="1"
+            Grid.ColumnSpan="2"
+            IsReadOnly="True"
+            Margin="0,0,0,8"
+            Name="tboxKnownDirPath"
+            IsEnabled="{Binding #rbKnown.IsChecked}"
+            Text="{Binding #cmbKnownDirs.SelectedItem.Directory}" />
+
+        
+        <RadioButton
+            Grid.Row="2"
+            Name="rbCustom" />
+
+        <TextBox
+        Grid.Row="2"
+            Grid.Column="1"
+            HorizontalAlignment="Stretch"
+            Name="tboxCustomDirPath"
+            Margin="0,0,10,0"
+            VerticalAlignment="Center"
+            Text="{Binding $parent[1].Directory, Mode=OneWayToSource}"
+            IsEnabled="{Binding #rbCustom.IsChecked}"/>
+
+        <Button
+             Grid.Row="2"
+             Grid.Column="2"
+             Name="btnBrowse"
+             IsEnabled="{Binding #rbCustom.IsChecked}">
+                <TextBlock Text="..." />
+        </Button>
+
+    </Grid>
+</UserControl>

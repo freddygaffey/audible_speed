@@ -110,9 +110,10 @@ export default function Settings() {
               Activation bytes
             </label>
             <p className="mb-3 text-xs text-gray-500">
-              8-character hex string used to decrypt .aax files. Find yours with{" "}
-              <code className="text-gray-400">audible-activator</code> or{" "}
-              <code className="text-gray-400">AAXClean</code>.
+              8-character hex string used to decrypt .aax files. Leave blank if you only use Speed downloads: the
+              server can take the key from your Audible license on the first DRM download and save it here. You can
+              still paste bytes from <code className="text-gray-400">audible-activator</code> or{" "}
+              <code className="text-gray-400">AAXClean</code> to override.
             </p>
             <input
               type="text"

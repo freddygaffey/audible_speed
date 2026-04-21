@@ -1,0 +1,323 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+			 xmlns:views="clr-namespace:LibationAvalonia.Views"
+			 xmlns:vm="clr-namespace:LibationAvalonia.ViewModels"
+			 xmlns:uibase="clr-namespace:LibationUiBase.GridView;assembly=LibationUiBase"
+			 xmlns:controls="clr-namespace:LibationAvalonia.Controls"
+             mc:Ignorable="d" d:DesignWidth="1560" d:DesignHeight="400"
+			 x:DataType="vm:ProductsDisplayViewModel"
+             x:Class="LibationAvalonia.Views.ProductsDisplay">
+
+	<Grid>
+
+		<DataGrid
+			Name="productsGrid"
+			ClipboardCopyMode="IncludeHeader"
+			GridLinesVisibility="All"
+			AutoGenerateColumns="False"
+			ItemsSource="{CompiledBinding GridEntries}"
+			CanUserSortColumns="True" BorderThickness="3"
+			CanUserResizeColumns="True"
+			LoadingRow="ProductsDisplay_LoadingRow"
+			CanUserReorderColumns="True">
+
+			<DataGrid.Styles>
+				<Style Selector="DataGridColumnHeader">
+					<Setter Property="ContextMenu">
+						<ContextMenu Name="GridHeaderContextMenu" Opening="GridHeaderContextMenu_Opening" Closed="GridHeaderContextMenu_Closed">
+							<ContextMenu.Styles>
+								<Style Selector="MenuItem">
+									<Setter Property="Padding" Value="10,0,-10,0" />
+									<Style Selector="^ CheckBox">
+										<Setter Property="IsHitTestVisible" Value="True" />
+										<Setter Property="HorizontalAlignment" Value="Stretch" />
+										<Setter Property="HorizontalContentAlignment" Value="Stretch" />
+										<Setter Property="VerticalAlignment" Value="Stretch" />
+										<Setter Property="VerticalContentAlignment" Value="Stretch" />
+											<Style Selector="^ TextBlock">
+												<Setter Property="VerticalAlignment" Value="Center" />
+											</Style>
+									</Style>
+								</Style>
+							</ContextMenu.Styles>
+							<MenuItem>
+								<MenuItem.Header>
+									<TextBlock Text="Show / Hide Columns" />
+								</MenuItem.Header>
+							</MenuItem>
+							<MenuItem Header="-"/>                    
+						</ContextMenu>
+					</Setter>
+				</Style>
+				<Style Selector="DataGridCell">
+					<Setter Property="ContextMenu">
+						<ContextMenu Opening="GridCellContextMenu_Opening" Opened="GridCellContextMenu_Opened"/>
+					</Setter>
+				</Style>
+				<Style Selector="DataGridCell > Panel">
+					<Setter Property="VerticalAlignment" Value="Stretch"/>
+				</Style>
+				<Style Selector="DataGridCell > Panel > TextBlock">
+					<Setter Property="VerticalAlignment" Value="Center"/>
+					<Setter Property="HorizontalAlignment" Value="Stretch"/>
+					<Setter Property="TextWrapping" Value="Wrap"/>
+					<Setter Property="Padding" Value="4"/>
+				</Style>
+				<Style Selector="DataGridCell Path">
+					<Setter Property="Stretch" Value="Uniform" />
+					<Setter Property="VerticalAlignment" Value="Center" />
+					<Setter Property="Fill" Value="{DynamicResource	IconFill}" />
+				</Style>
+				<Style Selector="DataGridColumnHeader ContextMenu MenuItem">
+					<Setter Property="Padding" Value="0" />
+					<Style Selector="^:icon /template/ Viewbox#PART_IconPresenter">
+						<Setter Property="Height" Value="32" />
+						<Setter Property="Width" Value="32" />
+						<Setter Property="Margin" Value="6,0" />
+					</Style>
+				</Style>
+			</DataGrid.Styles>
+			
+			<DataGrid.Columns>
+ 
+				<DataGridTemplateColumn
+					CanUserSort="True"
+					CanUserResize="False"
+					IsVisible="{CompiledBinding RemoveColumnVisible}"
+					PropertyChanged="RemoveColumn_PropertyChanged"
+					Header="Remove"
+					IsReadOnly="False"
+					SortMemberPath="Remove"
+					Width="75">
+
+					<DataGridTemplateColumn.CellTemplate>
+						<DataTemplate x:DataType="uibase:GridEntry">
+							<CheckBox
+								HorizontalAlignment="Center"
+								IsThreeState="True"
+								IsChecked="{CompiledBinding Remove, Mode=TwoWay}" />
+						</DataTemplate>
+					</DataGridTemplateColumn.CellTemplate>
+				</DataGridTemplateColumn>
+
+				<controls:DataGridTemplateColumnExt CanUserResize="False" CanUserSort="True" Header="Liberate" SortMemberPath="Liberate" ClipboardContentBinding="{Binding Liberate.ToolTip}">
+					<DataGridTemplateColumn.CellTemplate>
+						<DataTemplate x:DataType="uibase:GridEntry">
+							<views:LiberateStatusButton
+								ToolTip.Tip="{CompiledBinding Liberate.ToolTip}"
+								BookStatus="{CompiledBinding Liberate.BookStatus}"
+								PdfStatus="{CompiledBinding Liberate.PdfStatus}"
+								IsUnavailable="{CompiledBinding Liberate.IsUnavailable}"
+								IsSeries="{CompiledBinding Liberate.IsSeries}"
+								Expanded="{CompiledBinding Liberate.Expanded}"
+								Click="LiberateButton_Click" />
+						</DataTemplate>
+					</DataGridTemplateColumn.CellTemplate>
+				</controls:DataGridTemplateColumnExt>
+
+				<controls:DataGridTemplateColumnExt Header="Cover" CanUserResize="False" CanUserSort="False" SortMemberPath="Cover" ClipboardContentBinding="{Binding LibraryBook.Book.PictureLarge}">
+					<DataGridTemplateColumn.CellTemplate>
+						<DataTemplate x:DataType="uibase:GridEntry">
+							<Image Opacity="{CompiledBinding Liberate.Opacity}" Tapped="Cover_Click" Source="{CompiledBinding Cover}" ToolTip.Tip="Click to see full size" />
+						</DataTemplate>
+					</DataGridTemplateColumn.CellTemplate>
+				</controls:DataGridTemplateColumnExt>
+
+				<controls:DataGridTemplateColumnExt Header="Title" MinWidth="10" Width="{CompiledBinding TitleWidth, Mode=TwoWay}" CanUserSort="True" SortMemberPath="Title" ClipboardContentBinding="{Binding Title}">
+					<DataGridTemplateColumn.CellTemplate>
+						<DataTemplate x:DataType="uibase:GridEntry">
+							<Panel Opacity="{CompiledBinding Liberate.Opacity}">
+								<TextBlock Classes="h1" Text="{CompiledBinding Title}" />
+							</Panel>
+						</DataTemplate>
+					</DataGridTemplateColumn.CellTemplate>
+				</controls:DataGridTemplateColumnExt>
+
+				<controls:DataGridTemplateColumnExt Header="Authors" MinWidth="10" Width="{CompiledBinding AuthorsWidth, Mode=TwoWay}" CanUserSort="True" SortMemberPath="Authors" ClipboardContentBinding="{Binding Authors}">
+					<DataGridTemplateColumn.CellTemplate>
+						<DataTemplate x:DataType="uibase:GridEntry">
+							<Panel Opacity="{CompiledBinding Liberate.Opacity}">
+								<TextBlock Text="{CompiledBinding Authors}" />
+							</Panel>
+						</DataTemplate>
+					</DataGridTemplateColumn.CellTemplate>
+				</controls:DataGridTemplateColumnExt>
+
+				<controls:DataGridTemplateColumnExt Header="Narrators" MinWidth="10" Width="{CompiledBinding NarratorsWidth, Mode=TwoWay}" CanUserSort="True" SortMemberPath="Narrators" ClipboardContentBinding="{Binding Narrators}">
+					<DataGridTemplateColumn.CellTemplate>
+						<DataTemplate x:DataType="uibase:GridEntry">
+							<Panel Opacity="{CompiledBinding Liberate.Opacity}">
+								<TextBlock Text="{CompiledBinding Narrators}" />
+							</Panel>
+						</DataTemplate>
+					</DataGridTemplateColumn.CellTemplate>
+				</controls:DataGridTemplateColumnExt>
+
+				<controls:DataGridTemplateColumnExt Header="Length" MinWidth="10" Width="{CompiledBinding LengthWidth, Mode=TwoWay}" CanUserSort="True" SortMemberPath="Length" ClipboardContentBinding="{Binding Length}">
+					<DataGridTemplateColumn.CellTemplate>
+						<DataTemplate x:DataType="uibase:GridEntry">
+							<Panel Opacity="{CompiledBinding Liberate.Opacity}">
+								<TextBlock Text="{CompiledBinding Length}" />
+							</Panel>
+						</DataTemplate>
+					</DataGridTemplateColumn.CellTemplate>
+				</controls:DataGridTemplateColumnExt>
+
+				<controls:DataGridTemplateColumnExt Header="Series" MinWidth="10" Width="{CompiledBinding SeriesWidth, Mode=TwoWay}" CanUserSort="True" SortMemberPath="Series" ClipboardContentBinding="{Binding Series}">
+					<DataGridTemplateColumn.CellTemplate>
+						<DataTemplate x:DataType="uibase:GridEntry">
+							<Panel Opacity="{CompiledBinding Liberate.Opacity}">
+								<TextBlock Text="{CompiledBinding Series}" />
+							</Panel>
+						</DataTemplate>
+					</DataGridTemplateColumn.CellTemplate>
+				</controls:DataGridTemplateColumnExt>
+
+				<controls:DataGridTemplateColumnExt Header="Series&#xA;Order" MinWidth="10" Width="{CompiledBinding SeriesOrderWidth, Mode=TwoWay}" CanUserSort="True" SortMemberPath="SeriesOrder" ClipboardContentBinding="{Binding Series}">
+					<DataGridTemplateColumn.CellTemplate>
+						<DataTemplate x:DataType="uibase:GridEntry">
+							<Panel Opacity="{CompiledBinding Liberate.Opacity}">
+								<TextBlock Text="{CompiledBinding SeriesOrder}" HorizontalAlignment="Center" />
+							</Panel>
+						</DataTemplate>
+					</DataGridTemplateColumn.CellTemplate>
+				</controls:DataGridTemplateColumnExt>
+
+				<controls:DataGridTemplateColumnExt Header="Description" MinWidth="10" Width="{CompiledBinding DescriptionWidth, Mode=TwoWay}" CanUserSort="True" SortMemberPath="Description" ClipboardContentBinding="{Binding Description}">
+					<DataGridTemplateColumn.CellTemplate>
+						<DataTemplate x:DataType="uibase:GridEntry">
+							<Panel Opacity="{CompiledBinding Liberate.Opacity}" Tapped="Description_Click" ToolTip.Tip="Click to see full description" >
+								<TextBlock Text="{CompiledBinding Description}" VerticalAlignment="Top" />
+							</Panel>
+						</DataTemplate>
+					</DataGridTemplateColumn.CellTemplate>
+				</controls:DataGridTemplateColumnExt>
+
+				<controls:DataGridTemplateColumnExt Header="Category" MinWidth="10" Width="{CompiledBinding CategoryWidth, Mode=TwoWay}" CanUserSort="True" SortMemberPath="Category" ClipboardContentBinding="{Binding Category}">
+					<DataGridTemplateColumn.CellTemplate>
+						<DataTemplate x:DataType="uibase:GridEntry">
+							<Panel Opacity="{CompiledBinding Liberate.Opacity}">
+								<TextBlock Text="{CompiledBinding Category}" />
+							</Panel>
+						</DataTemplate>
+					</DataGridTemplateColumn.CellTemplate>
+				</controls:DataGridTemplateColumnExt>
+
+				<controls:DataGridMyRatingColumn
+					x:DataType="uibase:GridEntry"
+					Header="Product&#xA;Rating"
+					IsReadOnly="true"
+					MinWidth="10" Width="{Binding ProductRatingWidth, Mode=TwoWay}"
+					SortMemberPath="ProductRating" CanUserSort="True"
+					OpacityBinding="{CompiledBinding Liberate.Opacity}"
+					ClipboardContentBinding="{CompiledBinding ProductRating}"
+					Binding="{CompiledBinding ProductRating}" />
+
+				<controls:DataGridTemplateColumnExt Header="Purchase&#xA;Date" MinWidth="10" Width="{CompiledBinding PurchaseDateWidth, Mode=TwoWay}" CanUserSort="True" SortMemberPath="PurchaseDate" ClipboardContentBinding="{Binding PurchaseDate}">
+					<DataGridTemplateColumn.CellTemplate>
+						<DataTemplate x:DataType="uibase:GridEntry">
+							<Panel Opacity="{CompiledBinding Liberate.Opacity}">
+								<TextBlock Text="{CompiledBinding PurchaseDate}" />
+							</Panel>
+						</DataTemplate>
+					</DataGridTemplateColumn.CellTemplate>
+				</controls:DataGridTemplateColumnExt>
+
+				<controls:DataGridMyRatingColumn
+					x:DataType="uibase:GridEntry"
+					Header="My Rating"
+					IsReadOnly="false"
+					MinWidth="10" Width="{Binding MyRatingWidth, Mode=TwoWay}"
+					SortMemberPath="MyRating" CanUserSort="True"
+					OpacityBinding="{CompiledBinding Liberate.Opacity}"
+					ClipboardContentBinding="{CompiledBinding MyRating}"					
+					Binding="{CompiledBinding MyRating, Mode=TwoWay}" />
+
+				<controls:DataGridTemplateColumnExt Header="Misc" MinWidth="10" Width="{CompiledBinding MiscWidth, Mode=TwoWay}" CanUserSort="True" SortMemberPath="Misc" ClipboardContentBinding="{Binding Misc}">
+					<DataGridTemplateColumn.CellTemplate>
+						<DataTemplate x:DataType="uibase:GridEntry">
+							<Panel Opacity="{CompiledBinding Liberate.Opacity}">
+								<TextBlock Text="{CompiledBinding Misc}" TextWrapping="WrapWithOverflow" />
+							</Panel>
+						</DataTemplate>
+					</DataGridTemplateColumn.CellTemplate>
+				</controls:DataGridTemplateColumnExt>
+				
+				<controls:DataGridTemplateColumnExt Header="Included&#xA;Until" MinWidth="10" Width="{CompiledBinding IncludedUntilWidth, Mode=TwoWay}" CanUserSort="True" SortMemberPath="IncludedUntil" ClipboardContentBinding="{Binding IncludedUntil}">
+					<DataGridTemplateColumn.CellTemplate>
+						<DataTemplate x:DataType="uibase:GridEntry">
+							<Panel Opacity="{CompiledBinding Liberate.Opacity}">
+								<TextBlock Text="{CompiledBinding IncludedUntil}" TextWrapping="WrapWithOverflow" />
+							</Panel>
+						</DataTemplate>
+					</DataGridTemplateColumn.CellTemplate>
+				</controls:DataGridTemplateColumnExt>
+				
+				<controls:DataGridTemplateColumnExt Header="Last&#xA;Download" MinWidth="10" Width="{CompiledBinding LastDownloadWidth, Mode=TwoWay}" CanUserSort="True" SortMemberPath="LastDownload" ClipboardContentBinding="{Binding LastDownload}">
+					<DataGridTemplateColumn.CellTemplate>
+						<DataTemplate x:DataType="uibase:GridEntry">
+							<Panel Opacity="{CompiledBinding Liberate.Opacity}" ToolTip.Tip="{CompiledBinding LastDownload.ToolTipText}" DoubleTapped="Version_DoubleClick">
+								<TextBlock Text="{CompiledBinding LastDownload}" TextWrapping="WrapWithOverflow" />
+							</Panel>
+						</DataTemplate>
+					</DataGridTemplateColumn.CellTemplate>
+				</controls:DataGridTemplateColumnExt>
+				
+				<controls:DataGridTemplateColumnExt Header="Is&#xA;Spatial" MinWidth="10" Width="{CompiledBinding IsSpatialWidth, Mode=TwoWay}" CanUserSort="True" SortMemberPath="IsSpatial" ClipboardContentBinding="{Binding IsSpatial}">
+					<DataGridTemplateColumn.CellTemplate>
+						<DataTemplate x:DataType="uibase:GridEntry">
+							<Panel Opacity="{CompiledBinding Liberate.Opacity}">
+								<CheckBox IsChecked="{CompiledBinding IsSpatial}" IsEnabled="False" HorizontalAlignment="Center" VerticalAlignment="Center" />
+							</Panel>
+						</DataTemplate>
+					</DataGridTemplateColumn.CellTemplate>
+				</controls:DataGridTemplateColumnExt>
+				
+				<controls:DataGridTemplateColumnExt Header="Account" MinWidth="10" Width="{CompiledBinding AccountWidth, Mode=TwoWay}" CanUserSort="True" SortMemberPath="Account" ClipboardContentBinding="{Binding Account}">
+					<DataGridTemplateColumn.CellTemplate>
+						<DataTemplate x:DataType="uibase:GridEntry">
+							<Panel Opacity="{CompiledBinding Liberate.Opacity}">
+								<TextBlock Text="{CompiledBinding Account}" TextWrapping="Wrap" />
+							</Panel>
+						</DataTemplate>
+					</DataGridTemplateColumn.CellTemplate>
+				</controls:DataGridTemplateColumnExt>
+
+				<controls:DataGridTemplateColumnExt Header="Tags" MinWidth="10" Width="{CompiledBinding BookTagsWidth, Mode=TwoWay}" CanUserSort="True" SortMemberPath="BookTags" ClipboardContentBinding="{Binding BookTags}">
+					<DataGridTemplateColumn.CellTemplate>
+						<DataTemplate x:DataType="uibase:GridEntry">
+							<Button
+								IsVisible="{CompiledBinding !Liberate.IsSeries}"
+								VerticalAlignment="Stretch"
+								HorizontalAlignment="Stretch"
+								VerticalContentAlignment="Stretch"
+								HorizontalContentAlignment="Stretch"
+								Click="OnTagsButtonClick"
+								ToolTip.Tip="Click to edit tags">
+								<Grid
+									RowDefinitions="*,*,*"
+									Opacity="{CompiledBinding Liberate.Opacity}">
+									<Viewbox
+										Grid.Row="1"
+										Stretch="Uniform"
+										IsVisible="{CompiledBinding BookTags, Converter={x:Static StringConverters.IsNullOrEmpty}}">
+
+										<Path Fill="{DynamicResource IconFill}" Data="{StaticResource EditTagsIcon}" />
+									</Viewbox>
+									<TextBlock
+										Classes="h2"
+										Grid.RowSpan="3"
+										IsVisible="{CompiledBinding BookTags, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" TextWrapping="WrapWithOverflow" HorizontalAlignment="Center" VerticalAlignment="Center" Text="{CompiledBinding BookTags}"/>
+
+								</Grid>
+							</Button>
+						</DataTemplate>
+					</DataGridTemplateColumn.CellTemplate>
+				</controls:DataGridTemplateColumnExt>
+
+			</DataGrid.Columns>
+		</DataGrid>
+	</Grid>
+</UserControl>

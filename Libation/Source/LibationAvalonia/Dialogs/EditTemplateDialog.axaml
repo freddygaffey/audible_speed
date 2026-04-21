@@ -1,0 +1,118 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+		Width="800" Height="450"
+        x:Class="LibationAvalonia.Dialogs.EditTemplateDialog"
+		xmlns:dialogs="clr-namespace:LibationAvalonia.Dialogs"
+		xmlns:controls="clr-namespace:LibationAvalonia.Controls"
+		x:DataType="dialogs:EditTemplateDialog+EditTemplateViewModel"
+        Title="EditTemplateDialog">
+
+	<Grid RowDefinitions="Auto,*,Auto" Margin="10">
+		<Grid
+			Grid.Row="0"
+			RowDefinitions="Auto,Auto"
+			ColumnDefinitions="*,Auto"
+			Margin="0,0,0,10">
+
+			<TextBlock
+				Grid.Column="0"
+				Grid.Row="0"
+				Margin="0,0,0,10"
+				Text="{CompiledBinding Description}" />
+
+			<TextBox
+				Grid.Column="0"
+				Grid.Row="1"
+				Name="userEditTbox"
+				Text="{CompiledBinding UserTemplateText, Mode=TwoWay}" />
+
+			<Button
+				Grid.Column="1"
+				Grid.Row="1"
+				Margin="10,0,0,0"
+				VerticalAlignment="Stretch"
+				VerticalContentAlignment="Center"
+				Content="Reset to Default"
+				Command="{CompiledBinding ResetToDefault}"/>
+		</Grid>
+		<Grid Grid.Row="1" ColumnDefinitions="Auto,*"
+			  Margin="0,0,0,10">
+
+				<DataGrid
+					Grid.Row="0"
+					Grid.Column="0"
+					BorderBrush="{DynamicResource DataGridGridLinesBrush}"
+					BorderThickness="1"
+					GridLinesVisibility="All"
+					AutoGenerateColumns="False"
+					DoubleTapped="EditTemplateViewModel_DoubleTapped"
+					ItemsSource="{CompiledBinding ListItems}" >
+
+					<DataGrid.Columns>
+						<DataGridTemplateColumn Width="Auto" Header="Tag">
+							<DataGridTemplateColumn.CellTemplate>
+								<DataTemplate>
+									<TextBlock Height="18" Margin="10,0,10,0" VerticalAlignment="Center" Text="{CompiledBinding Item1}" />
+								</DataTemplate>
+							</DataGridTemplateColumn.CellTemplate>
+						</DataGridTemplateColumn>
+
+						<DataGridTemplateColumn Width="Auto" Header="Description">
+							<DataGridTemplateColumn.CellTemplate>
+								<DataTemplate>
+									<TextBlock
+										Height="18"
+										Margin="10,0,10,0"
+										VerticalAlignment="Center" Text="{CompiledBinding Item2}" />
+								</DataTemplate>
+							</DataGridTemplateColumn.CellTemplate>
+						</DataGridTemplateColumn>
+
+					</DataGrid.Columns>
+				</DataGrid>
+			
+			<Grid
+			Grid.Column="1"
+			Margin="10,0,0,0"
+			RowDefinitions="Auto,*,Auto"
+			HorizontalAlignment="Stretch">
+
+				<TextBlock
+					Margin="0,0,0,5"
+					Text="Example:"/>
+				
+				<Border
+					Grid.Row="1"
+					BorderThickness="1"
+					BorderBrush="{DynamicResource DataGridGridLinesBrush}">
+					
+					<TextBlock
+						TextWrapping="WrapWithOverflow"
+						Inlines="{CompiledBinding Inlines}" />
+
+				</Border>
+
+				<TextBlock
+					Grid.Row="2"
+					Margin="5"
+					Foreground="Firebrick"
+					Text="{CompiledBinding WarningText}"
+					IsVisible="{CompiledBinding WarningText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+			</Grid>
+		</Grid>
+		<controls:LinkLabel
+			Grid.Row="2"
+			VerticalAlignment="Center"
+			Text="Read about naming templates on the Wiki"
+			Command="{Binding GoToNamingTemplateWiki}" />
+		<Button
+			Grid.Row="2"
+				Classes="SaveButton"
+			HorizontalAlignment="Right"
+			Content="Save"
+			Click="SaveButton_Click" />
+	</Grid>
+</Window>

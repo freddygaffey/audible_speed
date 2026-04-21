@@ -36,7 +36,10 @@ const LoginErrorSchema = z.object({ status: z.literal("error"), error: z.string(
 const LoginResultSchema = z.discriminatedUnion("status", [LoginSuccessSchema, LoginErrorSchema]);
 export type LoginResult = z.infer<typeof LoginResultSchema>;
 
-const InitLoginSchema = z.object({ loginUrl: z.string(), pendingId: z.string() });
+const InitLoginSchema = z.object({
+  loginUrl: z.string(),
+  pendingId: z.string(),
+});
 export type InitLoginResult = z.infer<typeof InitLoginSchema>;
 
 // ---------------------------------------------------------------------------
@@ -54,10 +57,10 @@ export function initLogin(marketplace: string) {
   });
 }
 
-export function completeFromUrl(pendingId: string, maplandingUrl: string, marketplace: string) {
+export function completeFromUrl(pendingId: string, maplandingUrl: string) {
   return apiFetch(LoginResultSchema, "/audible/auth/complete-url", {
     method: "POST",
-    body: JSON.stringify({ pendingId, maplandingUrl, marketplace }),
+    body: JSON.stringify({ pendingId, maplandingUrl }),
   });
 }
 
@@ -93,8 +96,55 @@ const LibraryResponseSchema = z.object({
   pageSize: z.number(),
 });
 
+export type LibraryResponse = z.infer<typeof LibraryResponseSchema>;
+
 export function fetchLibrary(page = 1, pageSize = 50) {
   return apiFetch(LibraryResponseSchema, `/audible/library?page=${page}&pageSize=${pageSize}`);
+}
+
+/**
+ * Loads every library page. Audible often omits or misreports `total_records` (e.g. equals
+ * first page size), so we must not stop early on `books.length >= total`. We stop on an
+ * empty page, a short page, or a page that adds no new ASINs (duplicate guard).
+ */
+export async function fetchLibraryAll(chunkSize = 50): Promise<LibraryResponse> {
+  const books: Book[] = [];
+  const seenAsins = new Set<string>();
+  let page = 1;
+  let apiTotalHint = 0;
+
+  for (;;) {
+    const res = await fetchLibrary(page, chunkSize);
+    if (typeof res.total === "number" && res.total > 0) {
+      apiTotalHint = Math.max(apiTotalHint, res.total);
+    }
+
+    if (res.books.length === 0) break;
+
+    let added = 0;
+    for (const b of res.books) {
+      if (!seenAsins.has(b.asin)) {
+        seenAsins.add(b.asin);
+        books.push(b);
+        added++;
+      }
+    }
+
+    if (added === 0) break;
+    if (res.books.length < chunkSize) break;
+
+    page += 1;
+    if (page > 500) {
+      throw new Error("Library is too large to load (stopped after 500 pages).");
+    }
+  }
+
+  return {
+    books,
+    total: Math.max(apiTotalHint, books.length),
+    page: 1,
+    pageSize: books.length,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +174,29 @@ export function startDownload(asin: string, title: string, format: "mp3" | "m4b"
 
 export function listDownloadJobs() {
   return apiFetch(z.array(DownloadJobSchema), "/audible/downloads");
+}
+
+const DeleteAsinResponseSchema = z.object({
+  message: z.string(),
+  jobsRemoved: z.number().optional(),
+});
+
+export function deleteDownloadForAsin(asin: string) {
+  return apiFetch(
+    DeleteAsinResponseSchema,
+    `/audible/downloads/asin/${encodeURIComponent(asin)}`,
+    { method: "DELETE" },
+  );
+}
+
+const DeleteAllDownloadsResponseSchema = z.object({
+  message: z.string(),
+  jobsRemoved: z.number(),
+  filesRemoved: z.number(),
+});
+
+export function deleteAllDownloadedFiles() {
+  return apiFetch(DeleteAllDownloadsResponseSchema, "/audible/downloads", { method: "DELETE" });
 }
 
 // ---------------------------------------------------------------------------

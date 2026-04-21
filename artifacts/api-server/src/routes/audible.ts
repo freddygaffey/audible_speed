@@ -2,12 +2,11 @@ import { Router, type IRouter } from "express";
 import fs from "fs";
 import path from "path";
 import {
-  fetchLoginPage,
-  submitCredentials,
   submitOtp,
   initLogin,
   completeFromUrl,
   getSession,
+  getValidAccessToken,
   setSession,
   clearSession,
   MARKETPLACES,
@@ -18,6 +17,8 @@ import {
   getJob,
   startDownload,
   cancelJob,
+  removeDownloadForAsin,
+  removeAllDownloads,
   setActivationBytes,
 } from "../lib/downloadManager.js";
 import {
@@ -163,10 +164,9 @@ router.post("/audible/auth/login", async (req, res): Promise<void> => {
 
 // POST /audible/auth/complete-url  — complete login from pasted maplanding URL
 router.post("/audible/auth/complete-url", async (req, res): Promise<void> => {
-  const { pendingId, maplandingUrl, marketplace = "us" } = req.body as {
+  const { pendingId, maplandingUrl } = req.body as {
     pendingId?: string;
     maplandingUrl?: string;
-    marketplace?: string;
   };
 
   if (!pendingId || !maplandingUrl) {
@@ -184,10 +184,20 @@ router.post("/audible/auth/complete-url", async (req, res): Promise<void> => {
         expiresAt: new Date(Date.now() + result.expiresIn * 1000),
         username: result.username,
         email: result.email,
-        marketplace,
+        marketplace: result.marketplace,
+        adpToken: result.adpToken,
+        devicePrivateKey: result.devicePrivateKey,
       });
-      req.log.info({ username: result.username, marketplace }, "Audible login complete");
-      res.json({ status: "success", username: result.username, email: result.email, marketplace });
+      req.log.info(
+        { username: result.username, marketplace: result.marketplace },
+        "Audible login complete",
+      );
+      res.json({
+        status: "success",
+        username: result.username,
+        email: result.email,
+        marketplace: result.marketplace,
+      });
     } else {
       res.status(401).json({ status: "error", error: (result as any).message ?? "Auth failed" });
     }
@@ -220,10 +230,17 @@ router.post("/audible/auth/otp", async (req, res): Promise<void> => {
         expiresAt: new Date(Date.now() + result.expiresIn * 1000),
         username: result.username,
         email: result.email,
-        marketplace,
+        marketplace: result.marketplace,
+        adpToken: result.adpToken,
+        devicePrivateKey: result.devicePrivateKey,
       });
       req.log.info({ username: result.username }, "Audible OTP success");
-      res.json({ status: "success", username: result.username, email: result.email, marketplace });
+      res.json({
+        status: "success",
+        username: result.username,
+        email: result.email,
+        marketplace: result.marketplace,
+      });
     } else if (result.status === "otp") {
       res.json({ status: "otp", pendingId: result.pendingId });
     } else {
@@ -236,9 +253,15 @@ router.post("/audible/auth/otp", async (req, res): Promise<void> => {
 });
 
 // GET /audible/auth/status
-router.get("/audible/auth/status", async (_req, res): Promise<void> => {
+router.get("/audible/auth/status", async (req, res): Promise<void> => {
   const session = getSession();
   if (!session) {
+    res.json({ authenticated: false, username: null, email: null, marketplace: null });
+    return;
+  }
+  const token = await getValidAccessToken();
+  if (!token) {
+    req.log.warn("Audible auth status: no valid token");
     res.json({ authenticated: false, username: null, email: null, marketplace: null });
     return;
   }
@@ -302,6 +325,32 @@ router.get("/audible/library/stats", async (req, res): Promise<void> => {
 // Downloads
 // ---------------------------------------------------------------------------
 
+router.delete("/audible/downloads/asin/:asin", async (req, res): Promise<void> => {
+  if (!getSession()) { res.status(401).json({ error: "Not authenticated" }); return; }
+
+  const asin = req.params.asin?.trim() ?? "";
+  if (!asin || !/^[A-Z0-9]{8,32}$/i.test(asin)) {
+    res.status(400).json({ error: "Invalid ASIN" }); return;
+  }
+
+  const { jobsRemoved } = removeDownloadForAsin(asin);
+  res.json({
+    message: "Removed",
+    jobsRemoved,
+  });
+});
+
+router.delete("/audible/downloads", async (_req, res): Promise<void> => {
+  if (!getSession()) { res.status(401).json({ error: "Not authenticated" }); return; }
+
+  const { jobsRemoved, filesRemoved } = removeAllDownloads();
+  res.json({
+    message: "All local downloads removed",
+    jobsRemoved,
+    filesRemoved,
+  });
+});
+
 router.get("/audible/downloads", async (_req, res): Promise<void> => {
   res.json(listJobs());
 });
@@ -349,8 +398,10 @@ router.get("/audible/download/:id/file", async (req, res): Promise<void> => {
     res.status(404).json({ error: "File missing on disk" }); return;
   }
 
-  const ext = path.extname(job.outputPath).slice(1);
-  const mimeType = ext === "m4b" ? "audio/mp4" : "audio/mpeg";
+  const ext = path.extname(job.outputPath).slice(1).toLowerCase();
+  // AAC-LC in MP4; codecs hint helps some WebKit builds pick a working demuxer path.
+  const mimeType =
+    ext === "m4b" || ext === "m4a" ? "audio/mp4; codecs=mp4a.40.2" : "audio/mpeg";
   const fileName = `${job.title.replace(/[^a-z0-9 ]/gi, "_")}.${ext}`;
   res.setHeader("Content-Type", mimeType);
   res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);

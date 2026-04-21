@@ -1,0 +1,85 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>net10.0-windows7.0</TargetFramework>
+		<EnableWindowsTargeting>true</EnableWindowsTargeting>
+		<ApplicationIcon>libation.ico</ApplicationIcon>
+		<AssemblyName>Libation</AssemblyName>
+		<UseWindowsForms>true</UseWindowsForms>
+		<Nullable>enable</Nullable>
+		<PublishReadyToRun>true</PublishReadyToRun>
+		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+		<AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+		<IsPublishable>true</IsPublishable>
+		<NoWarn>$(NoWarn);WFO1000;MSB3277</NoWarn>
+		<!-- Version is now in AppScaffolding.csproj -->
+	</PropertyGroup>
+
+	<ItemGroup>
+		<RuntimeHostConfigurationOption Include="System.Net.DisableIPv6" Value="true" />
+	</ItemGroup>
+
+	<PropertyGroup>
+		<SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+		<OutputPath>..\bin\Debug</OutputPath>
+		<DebugType>embedded</DebugType>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+		<OutputPath>..\bin\Release</OutputPath>
+		<DebugType>embedded</DebugType>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<None Remove=".gitignore" />
+	</ItemGroup>
+
+
+	<ItemGroup>
+		<PackageReference Include="Dinah.Core.WindowsDesktop" Version="10.0.0.1" />
+		<PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3719.77" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <ProjectReference Include="..\LibationUiBase\LibationUiBase.csproj" />
+	</ItemGroup>
+	<ItemGroup>
+		<Compile Update="Form1.*.cs">
+			<DependentUpon>Form1.cs</DependentUpon>
+		</Compile>
+	</ItemGroup>
+
+	<ItemGroup>
+		<Compile Update="Dialogs\SettingsDialog.*.cs">
+			<DependentUpon>SettingsDialog.cs</DependentUpon>
+		</Compile>
+	</ItemGroup>
+
+	<ItemGroup>
+		<Compile Update="Properties\Resources.Designer.cs">
+			<DesignTime>True</DesignTime>
+			<AutoGen>True</AutoGen>
+			<DependentUpon>Resources.resx</DependentUpon>
+		</Compile>
+	</ItemGroup>
+
+	<ItemGroup>
+		<EmbeddedResource Update="Properties\Resources.resx">
+			<Generator>ResXFileCodeGenerator</Generator>
+			<LastGenOutput>Resources.Designer.cs</LastGenOutput>
+		</EmbeddedResource>
+	</ItemGroup>
+
+	<Target Name="SpicNSpan" AfterTargets="Clean">
+		<!-- Remove obj folder -->
+		<RemoveDir Directories="$(BaseIntermediateOutputPath)" />
+		<!-- Remove bin folder -->
+		<RemoveDir Directories="$(BaseOutputPath)" />
+	</Target>
+
+</Project>

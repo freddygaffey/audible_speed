@@ -1,0 +1,62 @@
+<Window
+	xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+	d:DesignWidth="500" d:DesignHeight="340"
+	MinWidth="200" MinHeight="210"
+	Width="500" Height="500"
+    x:Class="LibationAvalonia.Dialogs.ScanAccountsDialog"
+	xmlns:dialogs="clr-namespace:LibationAvalonia.Dialogs"
+	x:DataType="dialogs:ScanAccountsDialog"
+	x:CompileBindings="True"
+    Title="Which Accounts?"
+	WindowStartupLocation="CenterOwner">
+
+	<Grid
+		ColumnDefinitions="*,Auto"
+		RowDefinitions="Auto,*,Auto"
+		Margin="10">
+		<TextBlock
+			Grid.Row="0"
+			Grid.Column="0"
+			Grid.ColumnSpan="2"
+			Text="Check the accounts to scan and import.&#xa;To change default selections, go to: Settings > Accounts"/>
+
+		<DockPanel
+			Grid.Row="1"
+			Grid.Column="0"
+			Grid.ColumnSpan="2"
+			Margin="0,10"
+			VerticalAlignment="Stretch">
+
+			<ListBox Name="lbAccounts" ItemsSource="{Binding Accounts}">
+				<ListBox.ItemTemplate>
+					<DataTemplate>
+						<CheckBox
+							IsChecked="{Binding IsChecked, Mode=TwoWay}">
+							<TextBlock Text="{Binding Text}" />
+						</CheckBox>
+					</DataTemplate>
+				</ListBox.ItemTemplate>				
+			</ListBox>			
+		</DockPanel>
+		
+		<Button
+			Grid.Row="2"
+			Grid.Column="0"
+			Padding="20,6"
+			Content="Edit Accounts"
+			Command="{Binding EditAccountsAsync}"/>
+		
+		<Button
+			Grid.Row="2"
+			Grid.Column="1"
+			Classes="SaveButton"
+			HorizontalAlignment="Right"
+			Content="Import"
+			Name="ImportButton"
+			Command="{Binding SaveAndClose}"/>
+	</Grid>
+</Window>

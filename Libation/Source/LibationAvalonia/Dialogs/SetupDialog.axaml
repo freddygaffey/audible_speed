@@ -1,0 +1,83 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:dialogs="clr-namespace:LibationAvalonia.Dialogs"
+        mc:Ignorable="d" d:DesignWidth="500" d:DesignHeight="350"
+        x:Class="LibationAvalonia.Dialogs.SetupDialog"
+		WindowStartupLocation="CenterScreen"
+		Width="500" Height="350"
+		Icon="/Assets/libation.ico"
+        Title="Welcome to Libation"
+		x:DataType="dialogs:SetupDialog">
+
+	<Grid
+		Margin="10"
+		HorizontalAlignment="Stretch"
+		RowDefinitions="*,Auto,Auto">
+		
+		<TextBlock Grid.Row="0" TextWrapping="Wrap" Text="This appears to be your first time using Libation or a previous setup was incomplete.
+&#xa;
+&#xa;Please fill in a few settings. You can also change these settings later.
+&#xa;
+&#xa;After you make your selections, get started by importing your library.
+&#xa;Go to Import > Scan Library
+&#xa;
+&#xa;Download your entire library from the &quot;Liberate&quot; tab or
+&#xa;liberate your books one at a time by clicking the stoplight." />
+
+		<Grid
+			Grid.Row="1"
+			HorizontalAlignment="Stretch"
+			ColumnDefinitions="*,Auto"
+			Margin="0,0,0,10">
+
+			<Button
+				HorizontalAlignment="Stretch"
+				HorizontalContentAlignment="Center"
+				Padding="0,20"
+				Margin="0,0,10,0"
+				Click="NewUser_Click">
+
+				<TextBlock
+					FontSize="18"
+					TextAlignment="Center"
+					Text="NEW USER"/>
+
+			</Button>
+
+			<Grid
+				Grid.Column="1"
+				RowDefinitions="*,*">
+				
+			<TextBlock
+				VerticalAlignment="Top"
+				Text="Theme:  " />
+			
+			<ComboBox
+				Grid.Row="1"
+				VerticalAlignment="Bottom"
+				SelectedIndex="0"
+				SelectedItem="{Binding SelectedTheme, Mode=OneWayToSource}">
+				<ComboBox.Items>
+                    <ComboBoxItem Content="System" />
+					<ComboBoxItem Content="Light" />
+					<ComboBoxItem Content="Dark" />
+				</ComboBox.Items>
+			</ComboBox>
+
+			</Grid>
+		</Grid>
+		
+		<Button
+			Grid.Row="2"
+			Width="480"
+			Click="ReturningUser_Click">
+
+			<TextBlock
+				TextAlignment="Center"
+				Text="RETURNING USER&#xa;&#xa;I have previously installed Libation. This is an upgrade or re-install."/>
+		
+		</Button>		
+	</Grid>
+</Window>

@@ -1,0 +1,83 @@
+# build-linux.yml
+# Reusable workflow that builds the Linux and MacOS (x64 and arm64) versions of Libation.
+---
+name: build
+
+on:
+  workflow_call:
+    inputs:
+      libation-version:
+        type: string
+        required: true
+      dotnet-version:
+        type: string
+        required: true
+      run-unit-tests:
+        type: boolean
+      publish-r2r:
+        type: boolean
+      retention-days:
+        type: number
+      architecture:
+        type: string
+        description: "CPU architecture targeted by the build."
+        required: true
+      OS:
+        type: string
+        description: >
+          The operating system targeted by the build.
+          
+          There must be a corresponding Bundle_$OS.sh script file in ./Scripts
+        required: true
+
+jobs:
+  build:
+    name: "${{ inputs.OS }}-${{ inputs.architecture }}"
+    runs-on: ubuntu-latest
+    env:
+      RUNTIME_ID: "linux-${{ inputs.architecture }}"
+    steps:
+      - uses: actions/checkout@v6
+      
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+          dotnet-quality: "ga"
+
+      - name: Unit test
+        if: ${{ inputs.run-unit-tests }}
+        working-directory: ./Source
+        run: dotnet test
+
+      - name: Publish
+        id: publish
+        working-directory: ./Source
+        run: |
+          PUBLISH_ARGS=(
+            '--runtime' '${{ env.RUNTIME_ID }}'
+            '--configuration' 'Release'
+            '--output' '../bin'
+            '-p:PublishProtocol=FileSystem'
+            "-p:PublishReadyToRun=${{ inputs.publish-r2r }}"
+            '-p:SelfContained=true')
+            
+          dotnet publish LibationAvalonia/LibationAvalonia.csproj "${PUBLISH_ARGS[@]}"
+          dotnet publish LoadByOS/LinuxConfigApp/LinuxConfigApp.csproj "${PUBLISH_ARGS[@]}"
+          dotnet publish LibationCli/LibationCli.csproj "${PUBLISH_ARGS[@]}"
+          dotnet publish HangoverAvalonia/HangoverAvalonia.csproj "${PUBLISH_ARGS[@]}"
+
+      - name: Build bundle
+        id: bundle
+        run: |
+          SCRIPT=./Scripts/Bundle_${{ inputs.OS }}.sh
+          chmod +rx ${SCRIPT}
+          ${SCRIPT} ./bin "${{ inputs.libation-version }}" "${{ inputs.architecture }}"
+          artifact=$(ls ./bundle)
+          echo "artifact=${artifact}" >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bundle.outputs.artifact }}
+          path: ./bundle/${{ steps.bundle.outputs.artifact }}
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}

@@ -1,0 +1,13 @@
+MVVM
+====
+Libation is not strictly MVVM. It's not strictly anything. There are however efforts at moving some major components toward this pattern.
+
+Primary View: ProductsGrid
+Primary View Model: GridEntry
+
+see also: https://docs.microsoft.com/en-us/dotnet/desktop/winforms/controls/raise-change-notifications--bindingsource
+BindingSource + INotifyPropertyChanged + DataGridView is the backbone of our implementation. The SortableBindingList (BindingList/BindingSource) automatically subscribes to each entry's NotifyPropertyChanged -- which is why our AsyncNotifyPropertyChanged.NotifyPropertyChanged is needed even though none of our code calls it.
+
+- Adding or removing an entry to/from this BindingSource automatically updates the UI. No additional code needed.
+- Calling NotifyPropertyChanged with the name of a field updates that field in the UI
+- Calling NotifyPropertyChanged without a field name (or with an invalid field name) updates the whole entry in the UI

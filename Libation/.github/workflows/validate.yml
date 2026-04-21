@@ -1,0 +1,47 @@
+# validate.yml
+# Validates that Libation will build on a pull request or push to master.
+---
+name: validate
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - Source/**
+      - .github/workflows/**
+  pull_request:
+    branches: [master]
+    paths:
+      - Source/**
+      - .github/workflows/**
+
+jobs:
+  get_version:
+    runs-on: ubuntu-slim
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: Get version
+        id: get_version
+        run: |
+          wget "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/Source/AppScaffolding/AppScaffolding.csproj"
+          version="$(grep -Eio -m 1 '<Version>.*</Version>' ./AppScaffolding.csproj | sed -r 's/<\/?Version>//g')"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+  build:
+    needs: [get_version]
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+    with:
+      libation-version: ${{ needs.get_version.outputs.version }}
+      retention-days: 14
+      run-unit-tests: true
+      
+  docker:
+    needs: [get_version]
+    uses: ./.github/workflows/docker.yml
+    with:
+      version: ${{ needs.get_version.outputs.version }}
+      release: false
+    secrets:
+      docker_username: ${{ secrets.DOCKERHUB_USERNAME }}
+      docker_token: ${{ secrets.DOCKERHUB_TOKEN }}

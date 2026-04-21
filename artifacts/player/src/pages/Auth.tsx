@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { useAuth } from "../lib/authContext";
 import { initLogin, completeFromUrl } from "../lib/apiClient";
-import { Loader2, ExternalLink } from "lucide-react";
+import { Loader2, ExternalLink, ClipboardPaste, Check } from "lucide-react";
+import { isNative, getStoredServerUrl, saveServerUrl } from "../lib/platformConfig";
 
 const MARKETPLACES = [
   { id: "us", label: "United States" },
@@ -18,7 +19,7 @@ const MARKETPLACES = [
 type Step = "marketplace" | "awaiting";
 
 export default function Auth() {
-  const { setSession } = useAuth();
+  const { setSession, refreshFromServer } = useAuth();
   const [step, setStep] = useState<Step>("marketplace");
   const [marketplace, setMarketplace] = useState("us");
   const [loginUrl, setLoginUrl] = useState("");
@@ -26,6 +27,8 @@ export default function Auth() {
   const [pastedUrl, setPastedUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [serverUrl, setServerUrl] = useState(() => getStoredServerUrl());
+  const [serverSaved, setServerSaved] = useState(false);
 
   async function handleMarketplace(mkt: string) {
     setMarketplace(mkt);
@@ -48,9 +51,10 @@ export default function Auth() {
     setLoading(true);
     setError("");
     try {
-      const result = await completeFromUrl(pendingId, pastedUrl.trim(), marketplace);
+      const result = await completeFromUrl(pendingId, pastedUrl.trim());
       if (result.status === "success") {
         setSession({ username: result.username, email: result.email, marketplace: result.marketplace });
+        await refreshFromServer();
       } else {
         setError(result.error);
       }
@@ -71,6 +75,36 @@ export default function Auth() {
 
         {step === "marketplace" && (
           <div className="space-y-3">
+            {isNative() && (
+              <div className="space-y-2 rounded-lg border border-gray-800 bg-gray-900 p-3">
+                <p className="text-xs font-medium text-gray-300">API server URL (required on device)</p>
+                <p className="text-xs text-gray-500">
+                  Example: http://192.168.1.10:3001 — must reach the machine running the Speed API.
+                </p>
+                <input
+                  type="url"
+                  value={serverUrl}
+                  onChange={(e) => {
+                    setServerUrl(e.target.value);
+                    setServerSaved(false);
+                  }}
+                  placeholder="http://192.168.1.10:3001"
+                  className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-orange-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    saveServerUrl(serverUrl);
+                    setServerSaved(true);
+                    setTimeout(() => setServerSaved(false), 1500);
+                  }}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-gray-700 px-3 py-2 text-xs text-gray-300 hover:border-gray-500"
+                >
+                  {serverSaved && <Check className="h-3.5 w-3.5 text-green-400" />}
+                  {serverSaved ? "Saved" : "Save server URL"}
+                </button>
+              </div>
+            )}
             <p className="text-sm font-medium text-gray-300">Select your Audible marketplace</p>
             {loading && (
               <div className="flex justify-center py-4">
@@ -111,30 +145,50 @@ export default function Auth() {
             </div>
 
             <div className="space-y-3">
-              <a
-                href={loginUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex w-full items-center justify-center gap-2 rounded-lg bg-orange-500 px-4 py-3 font-medium text-white hover:bg-orange-600"
-              >
-                <ExternalLink className="h-4 w-4" />
-                Open Amazon Sign-in
-              </a>
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-gray-300">Step 1 — Sign in to Audible</p>
+                <a
+                  href={loginUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-orange-500 px-4 py-3 font-medium text-white hover:bg-orange-600"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  Open Amazon Sign-in
+                </a>
+              </div>
 
-              <p className="text-xs text-gray-400">
-                Sign in with your Amazon credentials. After signing in, your browser will show a
-                page that says <span className="text-gray-200">"Looking for something?"</span> —
-                copy the full URL from your browser's address bar and paste it below.
-              </p>
-
-              <input
-                type="text"
-                value={pastedUrl}
-                onChange={(e) => setPastedUrl(e.target.value)}
-                placeholder="Paste the redirect URL here"
-                required
-                className="w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-white placeholder-gray-500 focus:border-orange-500 focus:outline-none text-sm"
-              />
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-gray-300">Step 2 — Paste the redirect URL</p>
+                <p className="text-xs text-gray-500">
+                  After signing in you'll see an Audible page — copy the full URL from your browser's address bar and paste it here.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={pastedUrl}
+                    onChange={(e) => setPastedUrl(e.target.value)}
+                    placeholder="https://www.audible.com.au/ap/maplanding?..."
+                    required
+                    className="w-full flex-1 rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-white placeholder-gray-500 focus:border-orange-500 focus:outline-none text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const t = await navigator.clipboard.readText();
+                        setPastedUrl(t.trim());
+                      } catch {
+                        setError("Clipboard access denied — paste manually");
+                      }
+                    }}
+                    className="flex-shrink-0 rounded-lg border border-gray-700 px-3 py-3 text-gray-300 hover:border-gray-500"
+                    title="Paste from clipboard"
+                  >
+                    <ClipboardPaste className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
             </div>
 
             {error && <p className="text-sm text-red-400">{error}</p>}

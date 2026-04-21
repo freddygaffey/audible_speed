@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Libation
+Exec=env WEBKIT_DISABLE_COMPOSITING_MODE=1 libation
+Icon=libation
+Comment=Liberate your Audiobooks
+Terminal=false
+Type=Application
+MimeType=x-content/unix-software;
+Categories=Audio;AudioVideo;
+Keywords=audible;audio;audiobook;book;

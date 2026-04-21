@@ -1,0 +1,63 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+	<AssemblyName>Hangover</AssemblyName>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>hangover.ico</ApplicationIcon>
+    <ImplicitUsings>enable</ImplicitUsings>
+	<IsPublishable>true</IsPublishable>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.Net.DisableIPv6" Value="true" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <!--
+  When LibationWinForms and Hangover output to the same dir, Hangover must build before LibationWinForms
+
+  VS > rt-clk solution > Properties
+  left: Project Dependencies
+  top: Projects: LibationWinForms
+  bottom: manually check Hangover
+
+  edit debug and release output paths
+  -->
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <OutputPath>..\bin\Debug</OutputPath>
+	  <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <OutputPath>..\bin\Release</OutputPath>
+	  <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\HangoverBase\HangoverBase.csproj" />
+  </ItemGroup>
+
+	<ItemGroup>
+    <Compile Update="Form1.*.cs">
+      <DependentUpon>Form1.cs</DependentUpon>
+    </Compile>
+  </ItemGroup>
+
+	<Target Name="SpicNSpan" AfterTargets="Clean">
+		<!-- Remove obj folder -->
+		<RemoveDir Directories="$(BaseIntermediateOutputPath)" />
+		<!-- Remove bin folder -->
+		<RemoveDir Directories="$(BaseOutputPath)" />
+	</Target>
+
+</Project>

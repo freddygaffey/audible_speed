@@ -1,0 +1,81 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="450" d:DesignHeight="450"
+		MinWidth="450" MinHeight="450"
+		Width="450" Height="450"
+        x:Class="LibationAvalonia.Dialogs.EditReplacementChars"
+		xmlns:dialogs="clr-namespace:LibationAvalonia.Dialogs"
+		xmlns:controls="clr-namespace:LibationAvalonia.Controls"
+		x:DataType="dialogs:EditReplacementChars"
+		x:CompileBindings="True"
+		Title="File Path Character Replacement">
+
+	<Grid RowDefinitions="*,Auto">
+		<DataGrid
+			Grid.Row="0"
+			Grid.ColumnSpan="2"
+			Margin="5"
+			IsReadOnly="False"
+			GridLinesVisibility="All"
+			CanUserSortColumns="False"
+			AutoGenerateColumns="False"
+			ItemsSource="{Binding Replacements}"
+			KeyDown="replacementGrid_KeyDown"
+			BeginningEdit="replacementGrid_BeginningEdit"
+			CellEditEnded="replacementGrid_CellEditEnded"
+			CellEditEnding="replacementGrid_CellEditEnding">
+			<DataGrid.Columns>
+
+				<controls:DataGridTextColumnExt
+					x:DataType="dialogs:EditReplacementChars+ReplacementsExt"
+					MaxLength="1"
+					Header="Char to&#xa;Replace"
+					Binding="{Binding CharacterToReplace, Mode=TwoWay}"/>
+
+				<DataGridTextColumn
+					x:DataType="dialogs:EditReplacementChars+ReplacementsExt"
+					Header="Replacement&#xa;Text"
+					Binding="{Binding ReplacementText, Mode=TwoWay}"/>
+            
+				<DataGridTextColumn
+					x:DataType="dialogs:EditReplacementChars+ReplacementsExt"
+					Header="Description"
+					Binding="{Binding Description, Mode=TwoWay}"/>
+
+			</DataGrid.Columns>
+		</DataGrid>
+
+		<Grid
+			Grid.Row="1"
+			RowDefinitions="Auto,Auto"
+			ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto"
+			Margin="5">
+			<Grid.Styles>
+				<Style Selector="Button">
+					<Setter Property="Margin" Value="2"/>
+					<Setter Property="Padding" Value="6"/>
+					<Setter Property="VerticalAlignment" Value="Bottom"/>
+				</Style>
+				<Style Selector="TextBlock">
+					<Setter Property="VerticalAlignment" Value="Center"/>
+				</Style>
+			</Grid.Styles>
+
+			<TextBlock Grid.Row="0" Text="This&#xa;System:" IsVisible="{Binding !EnvironmentIsWindows}" />
+			<TextBlock Grid.Row="1" Text="NTFS:" IsVisible="{Binding !EnvironmentIsWindows}" />
+
+			<Button Grid.Column="1" Command="{Binding Defaults}" CommandParameter="{Binding EnvironmentIsWindows}" Content="Defaults" />
+			<Button Grid.Column="2" Command="{Binding LoFiDefaults}" CommandParameter="{Binding EnvironmentIsWindows}" Content="LoFi Defaults" />
+			<Button Grid.Column="3" Command="{Binding Barebones}" CommandParameter="{Binding EnvironmentIsWindows}" Content="Barebones" />
+
+			<Button Grid.Row="1" Grid.Column="1" IsVisible="{Binding !EnvironmentIsWindows}" Command="{Binding Defaults}" CommandParameter="True" Content="Defaults" />
+			<Button Grid.Row="1" Grid.Column="2" IsVisible="{Binding !EnvironmentIsWindows}" Command="{Binding LoFiDefaults}" CommandParameter="True" Content="LoFi Defaults" />
+			<Button Grid.Row="1" Grid.Column="3" IsVisible="{Binding !EnvironmentIsWindows}" Command="{Binding Barebones}" CommandParameter="True" Content="Barebones" />
+						
+			<Button Grid.RowSpan="2" Grid.Column="4" Command="{Binding Close}" Content="Cancel" />
+			<Button Grid.RowSpan="2" Grid.Column="5" Classes="SaveButton" Command="{Binding SaveAndClose}" Content="Save" />
+		</Grid>	
+	</Grid>	
+</Window>

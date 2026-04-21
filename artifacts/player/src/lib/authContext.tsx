@@ -1,7 +1,8 @@
-import { createContext, useContext, useEffect, useReducer, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useReducer, type ReactNode } from "react";
 import { z } from "zod";
 import { getAuthStatus, logout, setActivationBytes } from "./apiClient";
 import { loadActivationBytes } from "./activationBytes";
+import { clearLibrary } from "./libraryCache";
 
 const StoredSessionSchema = z.object({
   username: z.string(),
@@ -49,6 +50,7 @@ function reducer(state: AuthState, action: AuthAction): AuthState {
 
 interface AuthContextValue extends AuthState {
   setSession: (s: StoredSession) => void;
+  refreshFromServer: () => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -58,38 +60,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const initialState: AuthState = { status: "loading", session: loadStored() };
   const [state, dispatch] = useReducer(reducer, initialState);
 
-  useEffect(() => {
-    getAuthStatus()
-      .then((s) => {
-        if (s.authenticated && s.username && s.marketplace) {
-          dispatch({
-            type: "SET_SESSION",
-            session: { username: s.username, email: s.email ?? "", marketplace: s.marketplace },
-          });
-          const stored = loadActivationBytes();
-          if (stored) setActivationBytes(stored).catch(() => {});
-        } else {
-          dispatch({ type: "CLEAR" });
+  const refreshFromServer = useCallback(async () => {
+    try {
+      const s = await getAuthStatus();
+      if (s.authenticated && s.username && s.marketplace) {
+        const prev = loadStored();
+        const next = { username: s.username, email: s.email ?? "", marketplace: s.marketplace };
+        if (
+          prev &&
+          (prev.username !== next.username || prev.marketplace !== next.marketplace)
+        ) {
+          clearLibrary();
         }
-      })
-      .catch(() => {
-        // API server not running — fall back to cached session
-        if (loadStored()) {
-          dispatch({ type: "READY" });
-        } else {
-          dispatch({ type: "CLEAR" });
-        }
-      });
+        dispatch({
+          type: "SET_SESSION",
+          session: next,
+        });
+        const stored = loadActivationBytes();
+        if (stored) setActivationBytes(stored).catch(() => {});
+      } else {
+        dispatch({ type: "CLEAR" });
+      }
+    } catch {
+      const cached = loadStored();
+      if (cached) {
+        dispatch({ type: "SET_SESSION", session: cached });
+      } else {
+        dispatch({ type: "CLEAR" });
+      }
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshFromServer();
+  }, [refreshFromServer]);
 
   const setSession = (session: StoredSession) => dispatch({ type: "SET_SESSION", session });
 
   const signOut = async () => {
     await logout().catch(() => {});
+    clearLibrary();
     dispatch({ type: "CLEAR" });
   };
 
-  const value: AuthContextValue = { status: state.status, session: state.session, setSession, signOut };
+  const value: AuthContextValue = {
+    status: state.status,
+    session: state.session,
+    setSession,
+    refreshFromServer,
+    signOut,
+  };
 
   return (
     <AuthContext.Provider value={value}>

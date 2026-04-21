@@ -1,0 +1,74 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+		xmlns:dialogs="clr-namespace:LibationAvalonia.Dialogs"
+		x:DataType="dialogs:SearchSyntaxDialog"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="50"
+		MinWidth="500" MinHeight="650"
+		Width="800" Height="650"
+        x:Class="LibationAvalonia.Dialogs.SearchSyntaxDialog"
+        Title="Filter Options"
+		WindowStartupLocation="CenterOwner">
+	
+	<Grid
+		RowDefinitions="Auto,*"
+		ColumnDefinitions="*,*,*,*">
+
+		<Grid.Styles>
+			<Style Selector="Grid > Grid">
+				<Setter Property="Margin" Value="10,0" />
+			</Style>
+			<Style Selector="Grid > TextBlock">
+				<Setter Property="TextWrapping" Value="Wrap" />
+			</Style>
+			<Style Selector="TextBlock">
+				<Setter Property="FontSize" Value="12" />
+				<Setter Property="Margin" Value="0,5" />
+			</Style>
+			<Style Selector="ListBox">
+				<Setter Property="Margin" Value="0,5,0,10"/>
+				<Style Selector="^ > ListBoxItem">
+					<Setter Property="Padding" Value="0"/>
+					<Style Selector="^ TextBlock">
+						<Setter Property="Margin" Value="8,1"/>
+					</Style>
+				</Style>
+			</Style>
+		</Grid.Styles>
+
+		<Grid
+			Grid.ColumnSpan="4"
+			RowDefinitions="Auto,Auto">
+
+			<TextBlock
+				Text="Full Lucene query syntax is supported&#xa;Fields with similar names are synomyns (eg: Author, Authors, AuthorNames)" />
+
+			<TextBlock Grid.Row="1" Text="TAG FORMAT: [tagName]" />
+		</Grid>
+
+		<Grid Grid.Row="1" RowDefinitions="Auto,Auto,*">
+			<TextBlock Text="STRING FIELDS" />
+			<TextBlock Grid.Row="1" Text="{CompiledBinding StringUsage}" />
+			<ListBox Grid.Row="2" DoubleTapped="ListBox_DoubleTapped" ItemsSource="{CompiledBinding StringFields}"/>
+		</Grid>
+
+		<Grid Grid.Row="1" Grid.Column="1" RowDefinitions="Auto,Auto,*">
+			<TextBlock Text="NUMBER FIELDS" />
+			<TextBlock Grid.Row="1" Text="{CompiledBinding NumberUsage}" />
+			<ListBox Grid.Row="2" DoubleTapped="ListBox_DoubleTapped" ItemsSource="{CompiledBinding NumberFields}"/>
+		</Grid>
+
+		<Grid Grid.Row="1" Grid.Column="2" RowDefinitions="Auto,Auto,*">
+			<TextBlock Text="BOOLEAN (TRUE/FALSE) FIELDS" />
+			<TextBlock Grid.Row="1" Text="{CompiledBinding BoolUsage}" />
+			<ListBox Grid.Row="2" DoubleTapped="ListBox_DoubleTapped" ItemsSource="{CompiledBinding BoolFields}"/>
+		</Grid>
+
+		<Grid Grid.Row="1" Grid.Column="3" RowDefinitions="Auto,Auto,*">
+			<TextBlock Text="ID FIELDS" />
+			<TextBlock Grid.Row="1" Text="{CompiledBinding IdUsage}" />
+			<ListBox Grid.Row="2" DoubleTapped="ListBox_DoubleTapped" ItemsSource="{CompiledBinding IdFields}"/>
+		</Grid>		
+	</Grid>
+</Window>

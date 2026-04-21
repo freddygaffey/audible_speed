@@ -3,32 +3,58 @@ import { BookSchema, type Book } from "./apiClient";
 
 const CACHE_KEY = "speed_library_cache";
 
+/** Matches `StoredSession` fields used to scope cached library rows per Audible account. */
+export type LibraryIdentity = { username: string; marketplace: string };
+
 const CacheSchema = z.object({
   books: z.array(BookSchema),
   total: z.number(),
   savedAt: z.number(),
+  username: z.string().optional(),
+  marketplace: z.string().optional(),
 });
 
-export function saveLibrary(books: Book[], total: number) {
+export function clearLibrary() {
   try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ books, total, savedAt: Date.now() }));
+    localStorage.removeItem(CACHE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+export function saveLibrary(books: Book[], total: number, identity: LibraryIdentity) {
+  try {
+    localStorage.setItem(
+      CACHE_KEY,
+      JSON.stringify({
+        books,
+        total,
+        savedAt: Date.now(),
+        username: identity.username,
+        marketplace: identity.marketplace,
+      }),
+    );
   } catch {
     // localStorage full or unavailable — ignore
   }
 }
 
-export function getBook(asin: string): Book | null {
-  const cache = loadLibrary();
+export function getBook(asin: string, identity: LibraryIdentity): Book | null {
+  const cache = loadLibrary(identity);
   return cache?.books.find((b) => b.asin === asin) ?? null;
 }
 
-export function loadLibrary(): { books: Book[]; total: number } | null {
+export function loadLibrary(identity: LibraryIdentity | null): { books: Book[]; total: number } | null {
+  if (!identity) return null;
   try {
     const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return null;
     const parsed = CacheSchema.safeParse(JSON.parse(raw));
     if (!parsed.success) return null;
-    return { books: parsed.data.books, total: parsed.data.total };
+    const { books, total, username, marketplace } = parsed.data;
+    if (username == null || marketplace == null) return null;
+    if (username !== identity.username || marketplace !== identity.marketplace) return null;
+    return { books, total };
   } catch {
     return null;
   }

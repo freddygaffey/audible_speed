@@ -1,0 +1,5 @@
+# Used by scripts/audible_auth.py (PKCE browser login). Install with:
+#   python3 -m pip install -r requirements.txt
+# or use a venv under this directory.
+audible==0.8.2
+pywidevine==1.9.0

@@ -1,27 +1,100 @@
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "node:url";
 import { logger } from "./logger.js";
+import { pyCompleteLogin, pyInitLogin } from "./pythonBridge.js";
+
+/** `artifacts/api-server` — stable when bundled as `dist/index.mjs` (do not use `process.cwd()`). */
+function apiServerRoot(): string {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  return path.basename(here) === "dist"
+    ? path.resolve(here, "..")
+    : path.resolve(here, "..", "..");
+}
 
 // ---------------------------------------------------------------------------
-// Marketplace configs — used only for Audible API domain routing after auth
+// Marketplace configs
 // ---------------------------------------------------------------------------
 
-export const MARKETPLACES: Record<string, { domain: string; assocHandle: string; audibleDomain: string }> = {
-  us: { domain: "www.amazon.com",    assocHandle: "amzn_audible_ios_us", audibleDomain: "api.audible.com"     },
-  uk: { domain: "www.amazon.co.uk",  assocHandle: "amzn_audible_ios_uk", audibleDomain: "api.audible.co.uk"   },
-  de: { domain: "www.amazon.de",     assocHandle: "amzn_audible_ios_de", audibleDomain: "api.audible.de"      },
-  fr: { domain: "www.amazon.fr",     assocHandle: "amzn_audible_ios_fr", audibleDomain: "api.audible.fr"      },
-  ca: { domain: "www.amazon.ca",     assocHandle: "amzn_audible_ios_ca", audibleDomain: "api.audible.ca"      },
-  au: { domain: "www.amazon.com.au", assocHandle: "amzn_audible_ios_au", audibleDomain: "api.audible.com.au"  },
-  jp: { domain: "www.amazon.co.jp",  assocHandle: "amzn_audible_ios_jp", audibleDomain: "api.audible.co.jp"   },
-  it: { domain: "www.amazon.it",     assocHandle: "amzn_audible_ios_it", audibleDomain: "api.audible.it"      },
-  es: { domain: "www.amazon.es",     assocHandle: "amzn_audible_ios_es", audibleDomain: "api.audible.es"      },
+export const MARKETPLACES: Record<
+  string,
+  {
+    domain: string;
+    topDomain: string;
+    audibleDomain: string;
+    marketPlaceId: string;
+    language: string;
+  }
+> = {
+  us: {
+    domain: "www.amazon.com",
+    topDomain: "com",
+    audibleDomain: "api.audible.com",
+    marketPlaceId: "AF2M0KC94RCEA",
+    language: "en-US",
+  },
+  uk: {
+    domain: "www.amazon.co.uk",
+    topDomain: "co.uk",
+    audibleDomain: "api.audible.co.uk",
+    marketPlaceId: "A2I9A3Q2GNFNGQ",
+    language: "en-GB",
+  },
+  de: {
+    domain: "www.amazon.de",
+    topDomain: "de",
+    audibleDomain: "api.audible.de",
+    marketPlaceId: "AN7V1F1VY261K",
+    language: "de-DE",
+  },
+  fr: {
+    domain: "www.amazon.fr",
+    topDomain: "fr",
+    audibleDomain: "api.audible.fr",
+    marketPlaceId: "A2728XDNODOQ8T",
+    language: "fr-FR",
+  },
+  ca: {
+    domain: "www.amazon.ca",
+    topDomain: "ca",
+    audibleDomain: "api.audible.ca",
+    marketPlaceId: "A2CQZ5RBY40XE",
+    language: "en-CA",
+  },
+  au: {
+    domain: "www.amazon.com.au",
+    topDomain: "com.au",
+    audibleDomain: "api.audible.com.au",
+    marketPlaceId: "AN7EY7DTAW63G",
+    language: "en-AU",
+  },
+  jp: {
+    domain: "www.amazon.co.jp",
+    topDomain: "co.jp",
+    audibleDomain: "api.audible.co.jp",
+    marketPlaceId: "A1QAP3MOU4173J",
+    language: "ja-JP",
+  },
+  it: {
+    domain: "www.amazon.it",
+    topDomain: "it",
+    audibleDomain: "api.audible.it",
+    marketPlaceId: "A2N7FU2W2BU2ZC",
+    language: "it-IT",
+  },
+  es: {
+    domain: "www.amazon.es",
+    topDomain: "es",
+    audibleDomain: "api.audible.es",
+    marketPlaceId: "ALMIKO4SZCSAR",
+    language: "es-ES",
+  },
 };
 
 export const AUDIBLE_API_DOMAINS: Record<string, string> = Object.fromEntries(
-  Object.entries(MARKETPLACES).map(([k, v]) => [k, v.audibleDomain])
+  Object.entries(MARKETPLACES).map(([k, v]) => [k, v.audibleDomain]),
 );
-
-const IOS_UA = "Audible/671 CFNetwork/1335.0.3 Darwin/21.6.0";
 
 // ---------------------------------------------------------------------------
 // Auth session
@@ -35,557 +108,304 @@ export interface AuthSession {
   email: string;
   marketplace: string;
   activationBytes?: string;
+  /** MAC DMS — required for Audible 1.0 API signing (e.g. licenserequest). */
+  adpToken?: string;
+  devicePrivateKey?: string;
 }
 
-let currentSession: AuthSession | null = null;
-export function getSession(): AuthSession | null { return currentSession; }
-export function setSession(s: AuthSession): void  { currentSession = s; }
-export function clearSession(): void              { currentSession = null; }
+const SESSION_FILE = path.join(apiServerRoot(), ".audible-session.json");
+const LEGACY_SESSION_FILE = path.resolve(process.cwd(), ".audible-session.json");
+
+function isAuthSession(v: unknown): v is AuthSession {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.accessToken === "string" &&
+    typeof o.refreshToken === "string" &&
+    typeof o.expiresAt === "string" &&
+    typeof o.username === "string" &&
+    typeof o.email === "string" &&
+    typeof o.marketplace === "string" &&
+    (o.activationBytes === undefined || typeof o.activationBytes === "string") &&
+    (o.adpToken === undefined || typeof o.adpToken === "string") &&
+    (o.devicePrivateKey === undefined || typeof o.devicePrivateKey === "string")
+  );
+}
+
+function parseSessionFile(raw: string, file: string): AuthSession | null {
+  const parsed = JSON.parse(raw) as unknown;
+  if (!isAuthSession(parsed)) {
+    logger.warn({ sessionFile: file }, "Audible session file invalid");
+    return null;
+  }
+  return { ...parsed, expiresAt: new Date(parsed.expiresAt) };
+}
+
+function loadSession(): AuthSession | null {
+  const candidates = [SESSION_FILE, LEGACY_SESSION_FILE].filter(
+    (p, i, a) => a.indexOf(p) === i,
+  );
+  for (const file of candidates) {
+    try {
+      const raw = fs.readFileSync(file, "utf8");
+      const session = parseSessionFile(raw, file);
+      if (!session) continue;
+      if (file !== SESSION_FILE) {
+        saveSession(session);
+        try {
+          fs.unlinkSync(file);
+        } catch {
+          /* ignore */
+        }
+        logger.info({ from: file, to: SESSION_FILE }, "Migrated Audible session to api-server dir");
+      }
+      logger.info(
+        { sessionFile: SESSION_FILE, email: session.email, marketplace: session.marketplace },
+        "Restored Audible session",
+      );
+      return session;
+    } catch {
+      /* try next */
+    }
+  }
+  logger.info({ sessionFile: SESSION_FILE, cwd: process.cwd() }, "No persisted Audible session found");
+  return null;
+}
+
+function saveSession(session: AuthSession | null): void {
+  try {
+    if (!session) {
+      if (fs.existsSync(SESSION_FILE)) fs.unlinkSync(SESSION_FILE);
+      return;
+    }
+    fs.writeFileSync(SESSION_FILE, JSON.stringify(session), "utf8");
+  } catch (e) {
+    logger.warn({ err: (e as Error).message }, "Failed to persist Audible session");
+  }
+}
+
+let currentSession: AuthSession | null = loadSession();
+export function getSession(): AuthSession | null {
+  return currentSession;
+}
+export function setSession(s: AuthSession): void {
+  currentSession = s;
+  saveSession(currentSession);
+  logger.info({ sessionFile: SESSION_FILE, email: s.email, marketplace: s.marketplace }, "Saved Audible session");
+}
+export function clearSession(): void {
+  currentSession = null;
+  saveSession(null);
+  logger.info({ sessionFile: SESSION_FILE }, "Cleared Audible session");
+}
+
+/** Persist the current in-memory session (e.g. after mutating activationBytes). */
+export function flushSession(): void {
+  if (currentSession) saveSession(currentSession);
+}
 
 // ---------------------------------------------------------------------------
-// Pending login state (for OTP / captcha continuation)
+// Pending login state
 // ---------------------------------------------------------------------------
 
 interface PendingLogin {
   marketplace: string;
-  domain: string;
-  cookies: string[];         // accumulated Set-Cookie values
-  codeVerifier: string;
-  returnTo: string;
-  formAction: string;
-  hiddenFields: Record<string, string>;
+  pythonState: string;
   createdAt: number;
 }
 
-const pendingLogins = new Map<string, PendingLogin>();
+const PENDING_FILE = path.join(apiServerRoot(), ".pending-sessions.json");
+const LEGACY_PENDING_FILE = path.resolve(process.cwd(), ".pending-sessions.json");
+
+function isPendingLogin(v: unknown): v is PendingLogin {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.marketplace === "string" &&
+    typeof o.pythonState === "string" &&
+    typeof o.createdAt === "number"
+  );
+}
+
+function readPendingMapFromFile(file: string): Map<string, PendingLogin> {
+  const raw = fs.readFileSync(file, "utf8");
+  const obj = JSON.parse(raw) as Record<string, unknown>;
+  const map = new Map<string, PendingLogin>();
+  for (const [id, entry] of Object.entries(obj)) {
+    if (isPendingLogin(entry)) map.set(id, entry);
+  }
+  return map;
+}
+
+function loadPendingLogins(): Map<string, PendingLogin> {
+  const candidates = [PENDING_FILE, LEGACY_PENDING_FILE].filter((p, i, a) => a.indexOf(p) === i);
+  for (const file of candidates) {
+    try {
+      const map = readPendingMapFromFile(file);
+      if (map.size === 0) continue;
+      if (file !== PENDING_FILE) {
+        savePendingLogins(map);
+        try {
+          fs.unlinkSync(file);
+        } catch {
+          /* ignore */
+        }
+        logger.info({ from: file, to: PENDING_FILE }, "Migrated pending Audible logins to api-server dir");
+      }
+      return map;
+    } catch {
+      /* try next */
+    }
+  }
+  return new Map();
+}
+
+function savePendingLogins(map: Map<string, PendingLogin>): void {
+  try {
+    fs.writeFileSync(PENDING_FILE, JSON.stringify(Object.fromEntries(map)), "utf8");
+  } catch (e) {
+    logger.warn({ err: (e as Error).message }, "Failed to persist pending sessions");
+  }
+}
+
+const pendingLogins = loadPendingLogins();
 
 function makePendingId(): string {
   return crypto.randomBytes(16).toString("hex");
 }
 
-// Prune stale pending logins (older than 10 min)
 function prune() {
-  const cutoff = Date.now() - 10 * 60 * 1000;
+  const cutoff = Date.now() - 30 * 60 * 1000;
   for (const [id, p] of pendingLogins) {
     if (p.createdAt < cutoff) pendingLogins.delete(id);
   }
+  savePendingLogins(pendingLogins);
 }
 
 // ---------------------------------------------------------------------------
-// PKCE helpers
+// Login flow (Python audible package)
 // ---------------------------------------------------------------------------
 
-function generatePKCE(): { codeVerifier: string; codeChallenge: string } {
-  const codeVerifier = crypto.randomBytes(48).toString("base64url").slice(0, 96);
-  const codeChallenge = crypto.createHash("sha256").update(codeVerifier).digest("base64url");
-  return { codeVerifier, codeChallenge };
-}
-
-// ---------------------------------------------------------------------------
-// Simple cookie jar helpers
-// ---------------------------------------------------------------------------
-
-function parseCookies(setCookieHeaders: string[]): Record<string, string> {
-  const jar: Record<string, string> = {};
-  for (const header of setCookieHeaders) {
-    const part = header.split(";")[0].trim();
-    const eq = part.indexOf("=");
-    if (eq > 0) jar[part.slice(0, eq).trim()] = part.slice(eq + 1).trim();
-  }
-  return jar;
-}
-
-function cookieJarToHeader(jar: Record<string, string>): string {
-  return Object.entries(jar).map(([k, v]) => `${k}=${v}`).join("; ");
-}
-
-function mergeCookies(existing: string[], newHeaders: string[]): string[] {
-  const jar = parseCookies(existing);
-  const updates = parseCookies(newHeaders);
-  Object.assign(jar, updates);
-  return Object.entries(jar).map(([k, v]) => `${k}=${v}`);
-}
-
-// ---------------------------------------------------------------------------
-// HTML form field extractor
-// ---------------------------------------------------------------------------
-
-function extractHiddenFields(html: string): Record<string, string> {
-  const fields: Record<string, string> = {};
-  const re = /<input[^>]+type=["']hidden["'][^>]*>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(html)) !== null) {
-    const tag = m[0];
-    const nameM = /name=["']([^"']+)["']/.exec(tag);
-    const valueM = /value=["']([^"']*)["']/.exec(tag);
-    if (nameM) fields[nameM[1]] = valueM ? valueM[1] : "";
-  }
-  return fields;
-}
-
-function extractFormAction(html: string, fallback: string, domain?: string): string {
-  const m = /action=["']([^"']+)["']/.exec(html);
-  if (!m) return fallback;
-  if (m[1].startsWith("http")) return m[1];
-  return `https://${domain ?? "www.amazon.com"}${m[1]}`;
-}
-
-function extractInputByName(html: string, name: string): string {
-  const re = new RegExp(`<input[^>]+name=["']${name}["'][^>]*>`, "i");
-  const tag = re.exec(html)?.[0] ?? "";
-  return /value=["']([^"']*)["']/.exec(tag)?.[1] ?? "";
-}
-
-// Detect what type of page Amazon returned
-type PageType = "otp" | "captcha" | "maplanding" | "error" | "unknown";
-
-function detectPage(html: string, url: string): PageType {
-  if (url.includes("maplanding")) return "maplanding";
-  if (html.includes("auth-mfa-otpcode") || html.includes("cvf-input-code") || html.includes("otpCode")) return "otp";
-  if (html.includes("captcha") || html.includes("Captcha")) return "captcha";
-  if (html.includes("ap_error") || html.includes("error-box")) return "error";
-  return "unknown";
-}
-
-// ---------------------------------------------------------------------------
-// Step 1: Fetch the Amazon login page for the given marketplace
-// ---------------------------------------------------------------------------
-
-// Follow a GET redirect chain manually so we accumulate every Set-Cookie header.
-// fetch(redirect:"follow") silently drops intermediate Set-Cookie headers.
-async function fetchFollowingCookies(
-  startUrl: string,
-  headers: Record<string, string>,
-  accumCookies: string[] = [],
-  depth = 0
-): Promise<{ html: string; finalUrl: string; cookies: string[] }> {
-  if (depth > 10) throw new Error("Too many redirects");
-
-  const cookieHeader = cookieJarToHeader(parseCookies(accumCookies));
-  const resp = await fetch(startUrl, {
-    method: "GET",
-    redirect: "manual",
-    headers: { ...headers, ...(cookieHeader ? { Cookie: cookieHeader } : {}) },
-  });
-
-  const newCookies = resp.headers.getSetCookie?.() ?? [];
-  const merged = mergeCookies(accumCookies, newCookies);
-
-  if ((resp.status === 301 || resp.status === 302 || resp.status === 303) && resp.headers.get("location")) {
-    const location = resp.headers.get("location")!;
-    const next = location.startsWith("http") ? location : `${new URL(startUrl).origin}${location}`;
-    logger.debug({ from: startUrl, to: next, cookiesGained: newCookies.length, depth }, "fetchLoginPage redirect");
-    return fetchFollowingCookies(next, headers, merged, depth + 1);
-  }
-
-  const html = await resp.text();
-  logger.debug({ finalUrl: startUrl, status: resp.status, totalCookies: Object.keys(parseCookies(merged)).length }, "fetchLoginPage landed");
-  return { html, finalUrl: startUrl, cookies: merged };
-}
-
-// ---------------------------------------------------------------------------
-// Browser-based PKCE flow: generate URL without server-side page fetch
-// ---------------------------------------------------------------------------
-
-export function buildLoginUrl(marketplace: string): string {
-  const cfg = MARKETPLACES[marketplace] ?? MARKETPLACES.us;
-  const { codeChallenge } = generatePKCE();
-  const returnTo = `https://${cfg.domain}/ap/maplanding`;
-
-  const params = new URLSearchParams({
-    "openid.pape.preferred_auth_policies": "MultiFactor",
-    "openid.claimed_id": "http://specs.openid.net/auth/2.0/identifier_select",
-    "pageId": cfg.assocHandle,
-    "openid.mode": "checkid_setup",
-    "openid.ns.pape": "http://specs.openid.net/extensions/pape/1.0",
-    "openid.identity": "http://specs.openid.net/auth/2.0/identifier_select",
-    "openid.assoc_handle": cfg.assocHandle,
-    "openid.return_to": returnTo,
-    "openid.ns": "http://specs.openid.net/auth/2.0",
-    "openid.pape.max_auth_age": "0",
-    "openid.oa2.code_challenge_method": "S256",
-    "openid.oa2.code_challenge": codeChallenge,
-    "openid.oa2.response_type": "code",
-  });
-
-  return `https://${cfg.domain}/ap/signin?${params}`;
-}
-
-function generateSerial(): string {
-  return crypto.randomBytes(20).toString("hex"); // 40-char hex, matches device serial format
-}
-
-export async function initLogin(marketplace: string): Promise<{ pendingId: string; loginUrl: string }> {
+export async function initLogin(
+  marketplace: string,
+): Promise<{ pendingId: string; loginUrl: string }> {
   prune();
-  const cfg = MARKETPLACES[marketplace] ?? MARKETPLACES.us;
-  const { codeVerifier, codeChallenge } = generatePKCE();
-  const returnTo = `https://${cfg.domain}/ap/maplanding`;
-  const serial = generateSerial();
-
-  // URLSearchParams encodes ":" and "/" in values as %3A/%2F.
-  // Amazon's OpenID parser does NOT decode before comparing openid.ns, so it returns 404.
-  // Build the query string manually with raw (unencoded) URL values, matching Libation/audible-api.
-  const qs = [
-    `openid.ns=http://specs.openid.net/auth/2.0`,
-    `openid.identity=http://specs.openid.net/auth/2.0/identifier_select`,
-    `openid.claimed_id=http://specs.openid.net/auth/2.0/identifier_select`,
-    `openid.mode=checkid_setup`,
-    `openid.ns.pape=http://specs.openid.net/extensions/pape/1.0`,
-    `openid.pape.max_auth_age=0`,
-    `openid.pape.preferred_auth_policies=MultiFactor`,
-    `openid.return_to=${returnTo}`,
-    `openid.assoc_handle=${cfg.assocHandle}`,
-    `openid.oa2.client_id=device:${serial}`,
-    `openid.oa2.response_type=code`,
-    `openid.oa2.code_challenge_method=S256`,
-    `openid.oa2.code_challenge=${codeChallenge}`,
-    `pageId=${cfg.assocHandle}`,
-    `accountStatusPolicy=P1`,
-    `language=en-US`,
-  ].join("&");
-
-  const loginUrl = `https://${cfg.domain}/ap/signin?${qs}`;
+  const mkt = MARKETPLACES[marketplace] ? marketplace : "us";
+  if (mkt !== marketplace) {
+    logger.warn({ marketplace, fallback: mkt }, "initLogin: unknown marketplace key");
+  }
+  const { loginUrl, pythonState } = await pyInitLogin(mkt);
   const pendingId = makePendingId();
-
-  pendingLogins.set(pendingId, {
-    marketplace,
-    domain: cfg.domain,
-    cookies: [],
-    codeVerifier,
-    returnTo,
-    formAction: loginUrl,
-    hiddenFields: {},
-    createdAt: Date.now(),
-  });
-
-  logger.debug({ marketplace, pendingId }, "initLogin: generated login URL");
+  pendingLogins.set(pendingId, { marketplace: mkt, pythonState, createdAt: Date.now() });
+  savePendingLogins(pendingLogins);
+  logger.debug({ marketplace: mkt, pendingId }, "initLogin: Python bridge");
   return { pendingId, loginUrl };
 }
 
-export async function completeFromUrl(pendingId: string, maplandingUrl: string): Promise<LoginResult> {
-  const pending = pendingLogins.get(pendingId);
-  if (!pending) return { status: "error", message: "Login session expired. Please try again." };
-  pendingLogins.delete(pendingId);
-  return handleMaplandingRedirect(maplandingUrl, pending);
-}
-
-export async function fetchLoginPage(
-  marketplace: string
-): Promise<{ pendingId: string }> {
-  prune();
-  const cfg = MARKETPLACES[marketplace] ?? MARKETPLACES.us;
-  const { codeVerifier, codeChallenge } = generatePKCE();
-  const returnTo = `https://${cfg.domain}/ap/maplanding`;
-
-  const params = new URLSearchParams({
-    "openid.pape.preferred_auth_policies": "MultiFactor",
-    "openid.claimed_id": "http://specs.openid.net/auth/2.0/identifier_select",
-    "pageId": cfg.assocHandle,
-    "openid.mode": "checkid_setup",
-    "openid.ns.pape": "http://specs.openid.net/extensions/pape/1.0",
-    "openid.identity": "http://specs.openid.net/auth/2.0/identifier_select",
-    "openid.assoc_handle": cfg.assocHandle,
-    "openid.return_to": returnTo,
-    "openid.ns": "http://specs.openid.net/auth/2.0",
-    "openid.pape.max_auth_age": "0",
-    "openid.oa2.code_challenge_method": "S256",
-    "openid.oa2.code_challenge": codeChallenge,
-    "openid.oa2.response_type": "code",
-  });
-
-  const loginUrl = `https://${cfg.domain}/ap/signin?${params}`;
-
-  const { html, cookies } = await fetchFollowingCookies(loginUrl, {
-    "User-Agent": IOS_UA,
-    "Accept-Language": "en-US,en;q=0.9",
-  });
-
-  const hiddenFields = extractHiddenFields(html);
-  const formAction = extractFormAction(html, `https://${cfg.domain}/ap/signin`, cfg.domain);
-
-  logger.debug({ formAction, fieldNames: Object.keys(hiddenFields), cookieCount: Object.keys(parseCookies(cookies)).length }, "fetchLoginPage done");
-
-  const pendingId = makePendingId();
-  pendingLogins.set(pendingId, {
-    marketplace,
-    domain: cfg.domain,
-    cookies,
-    codeVerifier,
-    returnTo,
-    formAction,
-    hiddenFields,
-    createdAt: Date.now(),
-  });
-
-  return { pendingId };
-}
-
-// ---------------------------------------------------------------------------
-// Step 2: Submit email + password
-// ---------------------------------------------------------------------------
-
 export type LoginResult =
-  | { status: "success"; accessToken: string; refreshToken: string; expiresIn: number; username: string; email: string }
-  | { status: "otp";     pendingId: string }
-  | { status: "captcha"; message: string }
-  | { status: "error";   message: string };
-
-export async function submitCredentials(
-  pendingId: string,
-  email: string,
-  password: string
-): Promise<LoginResult> {
-  const pending = pendingLogins.get(pendingId);
-  if (!pending) return { status: "error", message: "Login session expired. Please try again." };
-
-  const cookieJar = parseCookies(pending.cookies);
-  const body = new URLSearchParams({
-    ...pending.hiddenFields,
-    email,
-    password,
-    appAction: "SIGNIN",
-  });
-
-  const resp = await fetch(pending.formAction, {
-    method: "POST",
-    redirect: "manual",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": IOS_UA,
-      "Cookie": cookieJarToHeader(cookieJar),
-      "Accept-Language": "en-US,en;q=0.9",
-      "Referer": `https://${pending.domain}/ap/signin`,
-    },
-    body: body.toString(),
-  });
-
-  const newCookies = resp.headers.getSetCookie?.() ?? [];
-  pending.cookies = mergeCookies(pending.cookies, newCookies);
-
-  // Follow redirect manually so we can inspect the URL
-  if (resp.status === 302 || resp.status === 301) {
-    const location = resp.headers.get("location") ?? "";
-    if (location.includes("maplanding")) {
-      return handleMaplandingRedirect(location, pending);
+  | {
+      status: "success";
+      accessToken: string;
+      refreshToken: string;
+      expiresIn: number;
+      username: string;
+      email: string;
+      marketplace: string;
+      adpToken: string;
+      devicePrivateKey: string;
     }
-    // Follow the redirect
-    return followRedirect(location, pending, pendingId);
-  }
+  | { status: "otp"; pendingId: string }
+  | { status: "captcha"; message: string }
+  | { status: "error"; message: string };
 
-  const html = await resp.text();
-  const pageType = detectPage(html, resp.url);
-
-  logger.debug({ pageType, formAction: pending.formAction, url: resp.url, status: resp.status, cookieCount: Object.keys(parseCookies(pending.cookies)).length, htmlSnippet: html.slice(0, 800) }, "submitCredentials page");
-
-  if (pageType === "otp") {
-    // Extract OTP form details
-    const otpFields = extractHiddenFields(html);
-    const otpAction = extractFormAction(html, `https://${pending.domain}/ap/cvf/verify`, pending.domain);
-    pending.hiddenFields = otpFields;
-    pending.formAction = otpAction;
-    return { status: "otp", pendingId };
-  }
-
-  if (pageType === "captcha") {
-    return { status: "captcha", message: "Amazon is showing a CAPTCHA. Please try again in a few minutes." };
-  }
-
-  if (pageType === "maplanding") {
-    return handleMaplandingRedirect(resp.url, pending);
-  }
-
-  // Check for error messages in the page
-  const errMatch = /<div[^>]+id="auth-error-message-box"[^>]*>.*?<p[^>]*>(.*?)<\/p>/s.exec(html);
-  const errMsg = errMatch ? errMatch[1].replace(/<[^>]+>/g, "").trim() : "Login failed. Check your credentials.";
-  return { status: "error", message: errMsg };
-}
-
-async function followRedirect(url: string, pending: PendingLogin, pendingId: string): Promise<LoginResult> {
-  const fullUrl = url.startsWith("http") ? url : `https://${pending.domain}${url}`;
-
-  if (fullUrl.includes("maplanding")) {
-    return handleMaplandingRedirect(fullUrl, pending);
-  }
-
-  const cookieJar = parseCookies(pending.cookies);
-  const resp = await fetch(fullUrl, {
-    method: "GET",
-    redirect: "manual",
-    headers: {
-      "User-Agent": IOS_UA,
-      "Cookie": cookieJarToHeader(cookieJar),
-      "Accept-Language": "en-US,en;q=0.9",
-    },
-  });
-
-  const newCookies = resp.headers.getSetCookie?.() ?? [];
-  pending.cookies = mergeCookies(pending.cookies, newCookies);
-
-  const location = resp.headers.get("location") ?? "";
-  if (resp.status === 301 || resp.status === 302) {
-    if (location.includes("maplanding")) return handleMaplandingRedirect(location, pending);
-    return followRedirect(location, pending, pendingId);
-  }
-
-  const html = await resp.text();
-  const pageType = detectPage(html, resp.url ?? fullUrl);
-
-  if (pageType === "otp") {
-    pending.hiddenFields = extractHiddenFields(html);
-    pending.formAction = extractFormAction(html, `https://${pending.domain}/ap/cvf/verify`, pending.domain);
-    return { status: "otp", pendingId };
-  }
-
-  if (pageType === "maplanding") {
-    return handleMaplandingRedirect(resp.url ?? fullUrl, pending);
-  }
-
-  return { status: "error", message: "Unexpected response from Amazon." };
-}
-
-// ---------------------------------------------------------------------------
-// Step 2b (optional): Submit OTP
-// ---------------------------------------------------------------------------
-
-export async function submitOtp(pendingId: string, otp: string): Promise<LoginResult> {
-  const pending = pendingLogins.get(pendingId);
-  if (!pending) return { status: "error", message: "Login session expired. Please try again." };
-
-  const cookieJar = parseCookies(pending.cookies);
-  const body = new URLSearchParams({
-    ...pending.hiddenFields,
-    "otpCode": otp,
-    "cvf_captcha_input": otp,
-    "code": otp,
-    "rememberDevice": "",
-  });
-
-  const resp = await fetch(pending.formAction, {
-    method: "POST",
-    redirect: "manual",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": IOS_UA,
-      "Cookie": cookieJarToHeader(cookieJar),
-      "Accept-Language": "en-US,en;q=0.9",
-    },
-    body: body.toString(),
-  });
-
-  const newCookies = resp.headers.getSetCookie?.() ?? [];
-  pending.cookies = mergeCookies(pending.cookies, newCookies);
-
-  const location = resp.headers.get("location") ?? "";
-  if ((resp.status === 301 || resp.status === 302) && location.includes("maplanding")) {
-    return handleMaplandingRedirect(location, pending);
-  }
-  if (resp.status === 301 || resp.status === 302) {
-    return followRedirect(location, pending, pendingId);
-  }
-
-  const html = await resp.text();
-  if (detectPage(html, resp.url) === "maplanding") {
-    return handleMaplandingRedirect(resp.url, pending);
-  }
-
-  return { status: "error", message: "OTP verification failed. Check the code and try again." };
-}
-
-// ---------------------------------------------------------------------------
-// Extract code from maplanding URL and exchange for tokens
-// ---------------------------------------------------------------------------
-
-async function handleMaplandingRedirect(url: string, pending: PendingLogin): Promise<LoginResult> {
-  // url may be relative or absolute
-  const fullUrl = url.startsWith("http") ? url : `https://${pending.domain}${url}`;
-  const parsed = new URL(fullUrl);
-
-  const code = parsed.searchParams.get("openid.oa2.authorization_code");
-  if (!code) {
-    return { status: "error", message: `No auth code in redirect URL. URL: ${fullUrl.slice(0, 200)}` };
-  }
-
-  return exchangeCodeForTokens(code, pending.codeVerifier, pending.returnTo, pending.marketplace);
-}
-
-// ---------------------------------------------------------------------------
-// Token exchange (called by handleMaplandingRedirect)
-// ---------------------------------------------------------------------------
-
-async function exchangeCodeForTokens(
-  code: string,
-  codeVerifier: string,
-  redirectUri: string,
-  marketplace: string
+export async function completeFromUrl(
+  pendingId: string,
+  maplandingUrl: string,
 ): Promise<LoginResult> {
-  const cfg = MARKETPLACES[marketplace] ?? MARKETPLACES.us;
-
-  const body = new URLSearchParams({
-    "client_id": cfg.assocHandle,
-    "code": code,
-    "code_verifier": codeVerifier,
-    "grant_type": "authorization_code",
-    "redirect_uri": redirectUri,
-  });
-
-  const resp = await fetch("https://api.amazon.com/auth/O2/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": IOS_UA },
-    body: body.toString(),
-  });
-
-  if (!resp.ok) {
-    const text = await resp.text();
-    return { status: "error", message: `Token exchange failed: ${resp.status} ${text}` };
+  const pending = pendingLogins.get(pendingId);
+  if (!pending)
+    return { status: "error", message: "Login session expired. Please try again." };
+  pendingLogins.delete(pendingId);
+  savePendingLogins(pendingLogins);
+  try {
+    const {
+      accessToken,
+      refreshToken,
+      expiresIn,
+      username,
+      email,
+      adpToken,
+      devicePrivateKey,
+    } = await pyCompleteLogin(pending.pythonState, maplandingUrl);
+    return {
+      status: "success",
+      accessToken,
+      refreshToken,
+      expiresIn,
+      username,
+      email,
+      marketplace: pending.marketplace,
+      adpToken,
+      devicePrivateKey,
+    };
+  } catch (err: unknown) {
+    return { status: "error", message: (err as Error).message };
   }
+}
 
-  const data = (await resp.json()) as { access_token: string; refresh_token: string; expires_in: number };
-  const info = await getAccountInfo(data.access_token);
-
-  return {
-    status: "success",
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token,
-    expiresIn: data.expires_in,
-    username: info.username,
-    email: info.email,
-  };
+export async function submitOtp(_pendingId: string, _otp: string): Promise<LoginResult> {
+  return { status: "error", message: "OTP not yet supported in Python bridge" };
 }
 
 // ---------------------------------------------------------------------------
 // Token refresh
 // ---------------------------------------------------------------------------
 
+const APP_UA =
+  "com.audible.playersdk.player/3.96.1 (Linux;Android 14) AndroidXMedia3/1.3.0";
+
 export async function refreshAccessToken(
   refreshToken: string,
-  marketplace: string
+  marketplace: string,
 ): Promise<{ accessToken: string; expiresIn: number }> {
   const cfg = MARKETPLACES[marketplace] ?? MARKETPLACES.us;
+  // Match mkb79/audible `refresh_access_token` (NOT LWA /auth/O2/token).
   const body = new URLSearchParams({
-    client_id: cfg.assocHandle,
-    refresh_token: refreshToken,
-    grant_type: "refresh_token",
+    app_name: "Audible",
+    app_version: "3.56.2",
+    source_token: refreshToken,
+    requested_token_type: "access_token",
+    source_token_type: "refresh_token",
   });
 
-  const resp = await fetch("https://api.amazon.com/auth/O2/token", {
+  const resp = await fetch(`https://api.amazon.${cfg.topDomain}/auth/token`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": IOS_UA },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": APP_UA },
     body: body.toString(),
   });
 
-  if (!resp.ok) throw new Error(`Token refresh failed: ${resp.status}`);
+  if (!resp.ok) {
+    const snippet = (await resp.text()).slice(0, 240);
+    throw new Error(`Token refresh failed: ${resp.status}${snippet ? ` — ${snippet}` : ""}`);
+  }
 
-  const data = (await resp.json()) as { access_token: string; expires_in: number };
-  return { accessToken: data.access_token, expiresIn: data.expires_in };
+  const data = (await resp.json()) as { access_token: string; expires_in: number | string };
+  const expiresIn =
+    typeof data.expires_in === "string" ? parseInt(data.expires_in, 10) : data.expires_in;
+  return { accessToken: data.access_token, expiresIn };
 }
 
 // ---------------------------------------------------------------------------
 // Account info
 // ---------------------------------------------------------------------------
 
-export async function getAccountInfo(accessToken: string): Promise<{ username: string; email: string }> {
-  const resp = await fetch("https://api.amazon.com/user/profile", {
-    headers: { Authorization: `Bearer ${accessToken}`, "User-Agent": IOS_UA },
+export async function getAccountInfo(
+  accessToken: string,
+  marketplace = "us",
+): Promise<{ username: string; email: string }> {
+  const cfg = MARKETPLACES[marketplace] ?? MARKETPLACES.us;
+  const resp = await fetch(`https://api.amazon.${cfg.topDomain}/user/profile`, {
+    headers: { Authorization: `Bearer ${accessToken}`, "User-Agent": APP_UA },
   });
   if (!resp.ok) return { username: "Audible User", email: "" };
   const data = (await resp.json()) as { name?: string; email?: string };
@@ -601,10 +421,21 @@ export async function getValidAccessToken(): Promise<string | null> {
   if (!session) return null;
   if (session.expiresAt.getTime() - Date.now() < 5 * 60 * 1000) {
     try {
-      const { accessToken, expiresIn } = await refreshAccessToken(session.refreshToken, session.marketplace);
+      const { accessToken, expiresIn } = await refreshAccessToken(
+        session.refreshToken,
+        session.marketplace,
+      );
       session.accessToken = accessToken;
       session.expiresAt = new Date(Date.now() + expiresIn * 1000);
-    } catch { return null; }
+      saveSession(session);
+    } catch (err) {
+      logger.error(
+        { err: (err as Error).message, marketplace: session.marketplace },
+        "Audible token refresh failed; clearing session",
+      );
+      clearSession();
+      return null;
+    }
   }
   return session.accessToken;
 }

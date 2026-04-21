@@ -1,0 +1,97 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>net10.0</TargetFramework>
+		<BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+		<ApplicationIcon>Assets/libation.ico</ApplicationIcon>
+		<AssemblyName>Libation</AssemblyName>
+		<IsPublishable>true</IsPublishable>
+		<PublishReadyToRun>true</PublishReadyToRun>
+		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+		<AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+		<Nullable>enable</Nullable>
+		<StartupObject />
+	</PropertyGroup>
+	
+	<ItemGroup>
+		<RuntimeHostConfigurationOption Include="System.Net.DisableIPv6" Value="true" />
+	</ItemGroup>
+
+	<PropertyGroup>
+		<SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+		<ApplicationManifest>app.manifest</ApplicationManifest>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+		<OutputPath>..\bin\Avalonia\Debug</OutputPath>
+		<DebugType>embedded</DebugType>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+		<OutputPath>..\bin\Avalonia\Release</OutputPath>
+		<DebugType>embedded</DebugType>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<AvaloniaResource Include="Assets\**" />
+		<None Remove=".gitignore" />
+		<None Remove="Assets\img-coverart-prod-unavailable_300x300.jpg" />
+		<None Remove="Assets\img-coverart-prod-unavailable_500x500.jpg" />
+		<None Remove="Assets\img-coverart-prod-unavailable_80x80.jpg" />
+		<None Remove="Assets\1x1.png" />
+		<None Remove="Assets\MBIcons\Asterisk_64.png" />
+		<None Remove="Assets\MBIcons\Error_64.png" />
+		<None Remove="Assets\MBIcons\Exclamation_64.png" />
+		<None Remove="Assets\MBIcons\Question_64.png" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Compile Update="Properties\Resources.Designer.cs">
+			<DesignTime>True</DesignTime>
+			<AutoGen>True</AutoGen>
+			<DependentUpon>Resources.resx</DependentUpon>
+		</Compile>
+		<Compile Update="Views\LiberateStatusButton.axaml.cs">
+		  <DependentUpon>LiberateStatusButton.axaml</DependentUpon>
+		</Compile>
+		<Compile Update="ViewModels\MainVM.*.cs">
+			<DependentUpon>MainVM.cs</DependentUpon>
+		</Compile>
+	</ItemGroup>
+
+	<ItemGroup>
+		<EmbeddedResource Update="Properties\Resources.resx">
+			<Generator>ResXFileCodeGenerator</Generator>
+			<LastGenOutput>Resources.Designer.cs</LastGenOutput>
+		</EmbeddedResource>
+	</ItemGroup>
+
+	<ItemGroup>
+		<UpToDateCheckInput Remove="Controls\GroupBox.axaml" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Avalonia.Controls.ColorPicker" Version="11.3.11" />
+		<PackageReference Include="Avalonia.Diagnostics" Version="11.3.11" Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'" />
+		<PackageReference Include="Avalonia.Controls.DataGrid" Version="11.3.11" />
+		<PackageReference Include="Avalonia.Desktop" Version="11.3.11" />
+		<PackageReference Include="ReactiveUI.Avalonia" Version="11.3.8" />
+		<PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.11" />
+		<PackageReference Include="WebViewControlAvaloniaFree" Version="11.3.16" />
+		<PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <ProjectReference Include="..\LibationUiBase\LibationUiBase.csproj" />
+	</ItemGroup>
+
+	<Target Name="SpicNSpan" AfterTargets="Clean">
+		<!-- Remove obj folder -->
+		<RemoveDir Directories="$(BaseIntermediateOutputPath)" />
+		<!-- Remove bin folder -->
+		<RemoveDir Directories="$(BaseOutputPath)" />
+	</Target>
+
+</Project>
