@@ -189,9 +189,21 @@ async function runPythonWidevineResolve(input: {
     proc.stdin.end();
     proc.on("close", (code) => {
       if (code !== 0) {
+        const stdErrTrim = stderr.trim();
+        const stdOutTrim = stdout.trim();
+        // widevine_resolve.py writes structured JSON errors to stdout; surface those first.
+        try {
+          const parsed = JSON.parse(stdOutTrim) as { error?: unknown };
+          if (typeof parsed.error === "string" && parsed.error.length > 0) {
+            reject(new Error(`widevine_resolve.py exited ${code}: ${parsed.error}`));
+            return;
+          }
+        } catch {
+          // non-JSON stdout; fall through to combined output
+        }
         reject(
           new Error(
-            `widevine_resolve.py exited ${code}: ${stderr.trim() || stdout.trim() || "unknown error"}`,
+            `widevine_resolve.py exited ${code}: ${stdErrTrim || stdOutTrim || "unknown error"}`,
           ),
         );
         return;

@@ -1,7 +1,7 @@
 import { Capacitor } from "@capacitor/core";
 
 /** Default: Node `speed-api` on the droplet (no reverse proxy). Override via `VITE_SPEED_API_ORIGIN` if needed. */
-const DEFAULT_SPEED_API_ORIGIN = "http://134.199.172.228:3001";
+const DEFAULT_SPEED_API_ORIGIN = "http://freds-mac.local:3001";
 
 const fromEnv = import.meta.env.VITE_SPEED_API_ORIGIN?.trim();
 

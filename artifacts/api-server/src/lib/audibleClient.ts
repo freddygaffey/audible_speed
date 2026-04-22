@@ -517,47 +517,67 @@ async function getDownloadUrlInternal(
   const session = getSession()!;
   const domain = AUDIBLE_API_DOMAINS[session.marketplace] ?? AUDIBLE_API_DOMAINS.us;
 
-  const params = new URLSearchParams({
-    quality: "High",
-    response_groups: "last_position_heard,pdf_url,content_reference,chapter_info",
-    type: "AUDI",
-    numeral: "1",
-  });
+  const requestLicense = async (
+    numeral?: string,
+  ): Promise<{ resp: Response; numeralUsed: string | null }> => {
+    const params = new URLSearchParams({
+      quality: "High",
+      response_groups: "last_position_heard,pdf_url,content_reference,chapter_info",
+      type: "AUDI",
+    });
+    if (numeral) params.set("numeral", numeral);
+    const fullUrl = `https://${domain}/1.0/content/${asin}/licenserequest?${params}`;
+    const url = new URL(fullUrl);
+    const pathWithQuery = url.pathname + url.search;
 
-  const fullUrl = `https://${domain}/1.0/content/${asin}/licenserequest?${params}`;
-  const url = new URL(fullUrl);
-  const pathWithQuery = url.pathname + url.search;
-
-  const bodyObj = {
-    quality: "High",
-    /** Required by Audible since ~2024; omitting yields 400 on `consumptionType`. */
-    consumption_type: "Download",
-    // Podcasts/AYCL can be unencrypted MPEG while books are ADRM.
-    // Let server choose one of the supported types.
-    supported_drm_types:
-      process.env.AUDIBLE_WIDEVINE_ENABLED !== "0" &&
-      process.env.AUDIBLE_WIDEVINE_ENABLED !== "false"
-        ? ["Adrm", "Mpeg", "Widevine"]
-        : ["Adrm", "Mpeg"],
-    response_groups: "last_position_heard,pdf_url,content_reference,chapter_info",
-    type: "AUDI",
-    numeral: "1",
+    const bodyObj: Record<string, unknown> = {
+      quality: "High",
+      /** Required by Audible since ~2024; omitting yields 400 on `consumptionType`. */
+      consumption_type: "Download",
+      // Podcasts/AYCL can be unencrypted MPEG while books are ADRM.
+      // Let server choose one of the supported types.
+      supported_drm_types:
+        process.env.AUDIBLE_WIDEVINE_ENABLED !== "0" &&
+        process.env.AUDIBLE_WIDEVINE_ENABLED !== "false"
+          ? ["Adrm", "Mpeg", "Widevine"]
+          : ["Adrm", "Mpeg"],
+      response_groups: "last_position_heard,pdf_url,content_reference,chapter_info",
+      type: "AUDI",
+    };
+    if (numeral) bodyObj.numeral = numeral;
+    const bodyUtf8 = JSON.stringify(bodyObj);
+    const headers = {
+      ...audibleApiHeaders("POST", pathWithQuery, bodyUtf8),
+      "Content-Type": "application/json",
+    };
+    const resp = await fetchWithRetry(
+      fullUrl,
+      {
+        method: "POST",
+        headers,
+        body: bodyUtf8,
+      },
+      { label: `Audible licenserequest (${domain})` },
+    );
+    return { resp, numeralUsed: numeral ?? null };
   };
-  const bodyUtf8 = JSON.stringify(bodyObj);
-  const headers = {
-    ...audibleApiHeaders("POST", pathWithQuery, bodyUtf8),
-    "Content-Type": "application/json",
-  };
 
-  const resp = await fetchWithRetry(
-    fullUrl,
-    {
-      method: "POST",
-      headers,
-      body: bodyUtf8,
-    },
-    { label: `Audible licenserequest (${domain})` },
-  );
+  // Try request without a hardcoded numeral first; some long titles return the full asset
+  // only when numeral is omitted. Fallback to numeral=1 for compatibility with older flows.
+  let response: { resp: Response; numeralUsed: string | null };
+  try {
+    response = await requestLicense();
+  } catch {
+    response = await requestLicense("1");
+  }
+  let resp = response.resp;
+  if (!resp.ok) {
+    // If the no-numeral request fails, retry once with numeral=1 before surfacing errors.
+    if (response.numeralUsed == null) {
+      response = await requestLicense("1");
+      resp = response.resp;
+    }
+  }
 
   if (!resp.ok) {
     const text = await resp.text();

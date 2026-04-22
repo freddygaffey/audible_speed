@@ -161,8 +161,14 @@ export function useDownloads() {
 
   async function downloadBatch(items: Array<{ asin: string; title: string }>) {
     if (!session || items.length === 0) return;
-    for (const item of items) {
-      await startDownload(item.asin, item.title, "m4b");
+    // Fire multiple server jobs in parallel so conversions can overlap.
+    // Keep a small cap to avoid spiking server load with huge selections.
+    const MAX_PARALLEL_STARTS = 3;
+    for (let i = 0; i < items.length; i += MAX_PARALLEL_STARTS) {
+      const slice = items.slice(i, i + MAX_PARALLEL_STARTS);
+      await Promise.all(
+        slice.map((item) => startDownload(item.asin, item.title, "m4b")),
+      );
     }
     await queryClient.invalidateQueries({
       queryKey: ["downloads", session.username, session.marketplace],

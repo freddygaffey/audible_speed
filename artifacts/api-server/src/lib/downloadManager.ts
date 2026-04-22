@@ -12,6 +12,10 @@ const FFMPEG_STDERR_CAP = 48 * 1024;
 const FILE_HEAD_SCAN_BYTES = 512;
 const PREVIEW_HEX_BYTES = 32;
 const AUDIBLE_HTTP_UA = "Audible/671 CFNetwork/1335.0.3 Darwin/21.6.0";
+const STRICT_OUTPUT_DECODE_VERIFY = process.env.SPEED_STRICT_OUTPUT_DECODE_VERIFY === "1";
+const SKIP_OUTPUT_DECODE_VERIFY = process.env.SPEED_SKIP_OUTPUT_DECODE_VERIFY === "1";
+const STREAM_CONVERT_ENABLED =
+  process.env.SPEED_STREAM_CONVERT !== "0" && process.env.SPEED_STREAM_CONVERT !== "false";
 
 function formatFfmpegFailure(
   code: number | null,
@@ -33,6 +37,7 @@ function formatFfmpegFailure(
  */
 interface RunFfmpegOptions {
   onOutTimeMs?: (outTimeMs: number) => void;
+  onProgressState?: (state: string) => void;
 }
 
 function runFfmpeg(args: string[], options: RunFfmpegOptions = {}): Promise<void> {
@@ -61,6 +66,10 @@ function runFfmpeg(args: string[], options: RunFfmpegOptions = {}): Promise<void
       const lines = stdoutRemainder.split(/\r?\n/);
       stdoutRemainder = lines.pop() ?? "";
       for (const line of lines) {
+        if (line.startsWith("progress=")) {
+          options.onProgressState?.(line.slice("progress=".length).trim());
+          continue;
+        }
         if (!line.startsWith("out_time_ms=")) continue;
         const outTimeMs = Number.parseInt(line.slice("out_time_ms=".length), 10);
         if (!Number.isFinite(outTimeMs) || outTimeMs < 0) continue;
@@ -177,6 +186,28 @@ function summarizeProbe(probe: ProbeResult | undefined): string {
   return `probe=format:${fmt},audio:${codec},ch:${ch},rate:${rate}`;
 }
 
+function expectedRuntimeMsFromLicenseChapterInfo(
+  chapterInfo:
+    | {
+        runtimeLengthMs?: number;
+        isAccurate?: boolean;
+        chapters: Array<{ title: string; startOffsetMs: number; lengthMs: number }>;
+      }
+    | undefined,
+): number | null {
+  if (!chapterInfo) return null;
+  const runtimeLengthMs =
+    typeof chapterInfo.runtimeLengthMs === "number" && Number.isFinite(chapterInfo.runtimeLengthMs)
+      ? Math.max(0, Math.floor(chapterInfo.runtimeLengthMs))
+      : 0;
+  if (runtimeLengthMs > 0) return runtimeLengthMs;
+  const summed = chapterInfo.chapters.reduce((acc, c) => {
+    if (typeof c.lengthMs !== "number" || !Number.isFinite(c.lengthMs) || c.lengthMs <= 0) return acc;
+    return acc + Math.floor(c.lengthMs);
+  }, 0);
+  return summed > 0 ? summed : null;
+}
+
 async function verifyDecodableAudio(pathToFile: string): Promise<void> {
   const args = [
     "-v",
@@ -191,6 +222,50 @@ async function verifyDecodableAudio(pathToFile: string): Promise<void> {
     "-",
   ];
   await runFfmpeg(args);
+}
+
+async function verifyDecodableAudioSample(
+  pathToFile: string,
+  durationSec: number | null,
+): Promise<void> {
+  const sampleSec = 15;
+  // Decode a short segment near the start.
+  await runFfmpeg([
+    "-v",
+    "error",
+    "-xerror",
+    "-ss",
+    "5",
+    "-t",
+    String(sampleSec),
+    "-i",
+    pathToFile,
+    "-map",
+    "0:a:0",
+    "-f",
+    "null",
+    "-",
+  ]);
+  // Decode a short segment near the end for tail corruption checks.
+  if (durationSec != null && Number.isFinite(durationSec) && durationSec > 120) {
+    const tailStart = Math.max(0, Math.floor(durationSec - sampleSec - 5));
+    await runFfmpeg([
+      "-v",
+      "error",
+      "-xerror",
+      "-ss",
+      String(tailStart),
+      "-t",
+      String(sampleSec),
+      "-i",
+      pathToFile,
+      "-map",
+      "0:a:0",
+      "-f",
+      "null",
+      "-",
+    ]);
+  }
 }
 
 interface DownloadArtifact {
@@ -611,6 +686,7 @@ async function runDownload(job: DownloadJob): Promise<void> {
   let widevineSelectedKid: string | undefined;
   let widevineError: string | undefined;
   let cencCandidateKeys: CencCandidateKey[] = [];
+  let expectedRuntimeMs: number | null = null;
   try {
     const lic = await getDownloadUrl(job.asin);
     downloadUrl = lic.offlineUrl;
@@ -621,6 +697,7 @@ async function runDownload(job: DownloadJob): Promise<void> {
     resolvedAsinForLicense = lic.resolvedAsin;
     cencSource = licenseCencKeyHex ? "voucher" : "none";
     licenseDrmType = lic.drmType;
+    expectedRuntimeMs = expectedRuntimeMsFromLicenseChapterInfo(lic.chapterInfo);
     if (licenseKeyHex) {
       const s = getSession();
       if (s && !s.activationBytes) {
@@ -671,6 +748,107 @@ async function runDownload(job: DownloadJob): Promise<void> {
     throw new Error(`Failed to get download URL: ${err.message}`);
   }
 
+  const verifyAndFinalizeOutput = async () => {
+    if (!fs.existsSync(outPath) || fs.statSync(outPath).size < 512) {
+      throw new Error("Conversion produced no usable output file (disk full or ffmpeg failed).");
+    }
+    const outputProbe = await runFfprobe(outPath);
+    if (!outputProbe.ok || !outputProbe.audioStream) {
+      throw new Error(`Converted output is invalid. ${summarizeProbe(outputProbe)}`);
+    }
+    const outputDurationSec = Number.parseFloat(outputProbe.format?.duration ?? "");
+    const outputDurationMs =
+      Number.isFinite(outputDurationSec) && outputDurationSec > 0 ? Math.floor(outputDurationSec * 1000) : null;
+    if (
+      expectedRuntimeMs != null &&
+      expectedRuntimeMs >= 30 * 60 * 1000 &&
+      outputDurationMs != null &&
+      outputDurationMs > 0
+    ) {
+      // Guard against long-title truncation (e.g. only first part returned by source URL).
+      const ratio = outputDurationMs / expectedRuntimeMs;
+      if (ratio < 0.75) {
+        throw new Error(
+          `Converted output duration is too short (${Math.floor(outputDurationMs / 60000)}m vs expected ${Math.floor(
+            expectedRuntimeMs / 60000,
+          )}m; ratio=${ratio.toFixed(3)}). Source likely returned a partial title asset; retrying should request a full download URL.`,
+        );
+      }
+    }
+    if (!SKIP_OUTPUT_DECODE_VERIFY) {
+      try {
+        if (STRICT_OUTPUT_DECODE_VERIFY) {
+          await verifyDecodableAudio(outPath);
+        } else {
+          await verifyDecodableAudioSample(
+            outPath,
+            outputDurationMs != null ? outputDurationMs / 1000 : null,
+          );
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`Converted output failed decode verification. ${msg.slice(0, 1200)}`);
+      }
+    }
+    update(job, {
+      status: "done",
+      progress: 100,
+      outputPath: outPath,
+      outputBytes: fs.statSync(outPath).size,
+      errorClass: null,
+      expiresAt: computeExpiryIso(),
+    });
+    logger.info({ jobId: job.id, asin: job.asin, outPath }, "Download complete");
+  };
+
+  const streamInputHeaders =
+    (licenseDrmType ?? "").toLowerCase() === "widevine" && widevineCookieHeader
+      ? { Cookie: widevineCookieHeader }
+      : undefined;
+  const useActivationBytes = (licenseDrmType ?? "").toLowerCase() !== "mpeg";
+  if (STREAM_CONVERT_ENABLED) {
+    update(job, { status: "converting", progress: 80 });
+    try {
+      await convertAax(
+        downloadUrl,
+        outPath,
+        job,
+        licenseKeyHex,
+        useActivationBytes,
+        {
+          inputFingerprint: "remote-stream",
+          inputProbe: { ok: false, stderr: "probe=remote-stream" },
+          sourceUrl: downloadUrl,
+          sourceContentType: "remote-stream",
+          cencKeyPresent: !!licenseCencKeyHex,
+          cencIvPresent: !!licenseCencIvHex,
+          cencSource,
+          widevineDefaultKid,
+          widevineSelectedKid,
+          widevineError,
+        },
+        licenseCencKeyHex,
+        licenseCencIvHex,
+        cencCandidateKeys,
+        streamInputHeaders,
+      );
+      await verifyAndFinalizeOutput();
+      return;
+    } catch (err: unknown) {
+      // Stream-first path is a performance optimization; keep robust fallback behavior.
+      logger.warn(
+        { asin: job.asin, err: err instanceof Error ? err.message : String(err) },
+        "Stream-convert failed, falling back to staged download+convert",
+      );
+      try {
+        fs.unlinkSync(outPath);
+      } catch {
+        /* ignore */
+      }
+      update(job, { status: "downloading", progress: 5 });
+    }
+  }
+
   // Phase 2: Download source payload
   update(job, { progress: 5 });
   const artifact = await downloadFile(
@@ -717,7 +895,6 @@ async function runDownload(job: DownloadJob): Promise<void> {
 
   // Phase 3: Convert with ffmpeg (can take a long time for full-book AAC transcode)
   update(job, { status: "converting", progress: 80 });
-  const useActivationBytes = (licenseDrmType ?? "").toLowerCase() !== "mpeg";
   await convertAax(
     aaxPath,
     outPath,
@@ -741,35 +918,11 @@ async function runDownload(job: DownloadJob): Promise<void> {
     cencCandidateKeys,
   );
 
-  if (!fs.existsSync(outPath) || fs.statSync(outPath).size < 512) {
-    throw new Error("Conversion produced no usable output file (disk full or ffmpeg failed).");
-  }
-  const outputProbe = await runFfprobe(outPath);
-  if (!outputProbe.ok || !outputProbe.audioStream) {
-    throw new Error(`Converted output is invalid. ${summarizeProbe(outputProbe)}`);
-  }
-  try {
-    await verifyDecodableAudio(outPath);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Converted output failed decode verification. ${msg.slice(0, 1200)}`);
-  }
-
   // Clean up source .aax
   try {
     fs.unlinkSync(aaxPath);
   } catch {}
-
-  update(job, {
-    status: "done",
-    progress: 100,
-    outputPath: outPath,
-    outputBytes: fs.statSync(outPath).size,
-    errorClass: null,
-    expiresAt: computeExpiryIso(),
-  });
-
-  logger.info({ jobId: job.id, asin: job.asin, outPath }, "Download complete");
+  await verifyAndFinalizeOutput();
 }
 
 async function downloadFile(
@@ -898,6 +1051,18 @@ function ffmpegActivationPrefix(
   return prefix;
 }
 
+function ffmpegHttpInputPrefix(inputPath: string, extraHeaders?: Record<string, string>): string[] {
+  if (!/^https?:\/\//i.test(inputPath)) return [];
+  const args: string[] = ["-user_agent", AUDIBLE_HTTP_UA];
+  const headerLines = Object.entries(extraHeaders ?? {})
+    .filter(([k, v]) => k.toLowerCase() !== "user-agent" && typeof v === "string" && v.trim().length > 0)
+    .map(([k, v]) => `${k}: ${v.trim()}`);
+  if (headerLines.length > 0) {
+    args.push("-headers", `${headerLines.join("\r\n")}\r\n`);
+  }
+  return args;
+}
+
 /**
  * M4B for web playback: re-encode to AAC instead of stream copy. Audible often
  * uses HE-AAC / odd MP4 layouts that decode in ffmpeg but fail in Safari/WebKit
@@ -912,15 +1077,15 @@ async function transcodeToM4b(
   cencKeyHex?: string,
   cencIvHex?: string,
   onOutTimeMs?: (outTimeMs: number) => void,
+  inputHeaders?: Record<string, string>,
 ): Promise<void> {
-  const isRemote = /^https?:\/\//i.test(aaxPath);
   const cencPrefix: string[] = [];
   if (cencKeyHex) {
     cencPrefix.push("-decryption_key", cencKeyHex);
     if (cencIvHex) cencPrefix.push("-decryption_iv", cencIvHex);
   }
   const args = [
-    ...(isRemote ? ["-user_agent", AUDIBLE_HTTP_UA] : []),
+    ...ffmpegHttpInputPrefix(aaxPath, inputHeaders),
     ...cencPrefix,
     ...ffmpegActivationPrefix(licenseKeyHex, storedActivation, useActivationBytes),
     "-i",
@@ -1017,6 +1182,7 @@ async function convertAax(
   cencKeyHex?: string,
   cencIvHex?: string,
   cencCandidateKeys: CencCandidateKey[] = [],
+  inputHeaders?: Record<string, string>,
 ): Promise<void> {
   const session = getSession();
   const storedActivation = session?.activationBytes;
@@ -1039,13 +1205,21 @@ async function convertAax(
       ? Math.floor(parsedDurationSec * 1000)
       : null;
   let highestConversionProgress = Math.max(job.progress, 80);
+  const markFinishing = () => {
+    if (highestConversionProgress >= 99) return;
+    highestConversionProgress = 99;
+    update(job, { progress: 99 });
+  };
   const onOutTimeMs = (outTimeMs: number) => {
     if (!durationMs || durationMs <= 0) return;
     const ratio = Math.max(0, Math.min(1, outTimeMs / durationMs));
-    const next = Math.max(80, Math.min(99, 80 + Math.floor(ratio * 19)));
+    const next = Math.max(80, Math.min(95, 80 + Math.floor(ratio * 15)));
     if (next <= highestConversionProgress) return;
     highestConversionProgress = next;
     update(job, { progress: next });
+  };
+  const onProgressState = (state: string) => {
+    if (state === "end") markFinishing();
   };
 
   if (job.format === "m4b") {
@@ -1085,7 +1259,9 @@ async function convertAax(
           candidate.keyHex,
           candidate.ivHex,
           onOutTimeMs,
+          inputHeaders,
         );
+        markFinishing();
         return;
       } catch (err: unknown) {
         lastErr = toErrorMessage(err);
@@ -1102,7 +1278,9 @@ async function convertAax(
         undefined,
         undefined,
         onOutTimeMs,
+        inputHeaders,
       );
+      markFinishing();
       return;
     } catch (err: unknown) {
       const msg = toErrorMessage(err);
@@ -1126,7 +1304,9 @@ async function convertAax(
             undefined,
             undefined,
             onOutTimeMs,
+            inputHeaders,
           );
+          markFinishing();
           return;
         } catch (e2: unknown) {
           lastErr = toErrorMessage(e2);
@@ -1144,7 +1324,6 @@ async function convertAax(
   }
 
   const cencPrefix: string[] = [];
-  const isRemote = /^https?:\/\//i.test(aaxPath);
   const looksAaxc = context.inputFingerprint.toLowerCase().includes("ftypaaxc");
   if (looksAaxc && !cencKeyHex) {
     throw new Error(
@@ -1156,7 +1335,7 @@ async function convertAax(
     if (cencIvHex) cencPrefix.push("-decryption_iv", cencIvHex);
   }
   const ffmpegArgs = [
-    ...(isRemote ? ["-user_agent", AUDIBLE_HTTP_UA] : []),
+    ...ffmpegHttpInputPrefix(aaxPath, inputHeaders),
     ...cencPrefix,
     ...ffmpegActivationPrefix(licenseKeyHex, storedActivation, useActivationBytes),
     "-i",
@@ -1173,7 +1352,8 @@ async function convertAax(
   let lastErr: string | undefined;
   try {
     attemptsTried.push(useActivationBytes ? "mp3_with_activation" : "mp3_no_activation");
-    await runFfmpeg(ffmpegArgs, { onOutTimeMs });
+    await runFfmpeg(ffmpegArgs, { onOutTimeMs, onProgressState });
+    markFinishing();
     return;
   } catch (err: unknown) {
     const msg = toErrorMessage(err);
@@ -1185,7 +1365,7 @@ async function convertAax(
     }
     if (useActivationBytes && isDemuxFailure(msg)) {
       const retryArgs = [
-        ...(isRemote ? ["-user_agent", AUDIBLE_HTTP_UA] : []),
+        ...ffmpegHttpInputPrefix(aaxPath, inputHeaders),
         ...cencPrefix,
         ...ffmpegActivationPrefix(licenseKeyHex, storedActivation, false),
         "-i",
@@ -1200,7 +1380,8 @@ async function convertAax(
       ];
       try {
         attemptsTried.push("mp3_no_activation_fallback");
-        await runFfmpeg(retryArgs, { onOutTimeMs });
+        await runFfmpeg(retryArgs, { onOutTimeMs, onProgressState });
+        markFinishing();
         return;
       } catch (e2: unknown) {
         lastErr = toErrorMessage(e2);

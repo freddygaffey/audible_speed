@@ -6,7 +6,7 @@ import base64
 import binascii
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Any
 
 import httpx
@@ -37,7 +37,7 @@ def _emit(obj: dict[str, Any]) -> None:
 
 
 def _utc_adp_timestamp() -> str:
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     if now.microsecond == 0:
         return now.strftime("%Y-%m-%dT%H:%M:%SZ")
     return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond:06d}Z"

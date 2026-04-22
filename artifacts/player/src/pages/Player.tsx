@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from "react";
+import type { PluginListenerHandle } from "@capacitor/core";
 import { useParams, useLocation } from "wouter";
 import { ArrowLeft, Play, Pause, SkipBack, SkipForward, BookOpen, List, X } from "lucide-react";
 import { useDownloads } from "../hooks/useDownloads";
@@ -14,11 +15,13 @@ import {
   syncListeningProgressQueued,
 } from "../lib/apiClient";
 import { ensureVaultCopy, getAnyLocalPlaybackUrl, getLocalPlaybackUrl } from "../lib/audioVault";
+import { NativeAudio, type NativeAudioStatus } from "../lib/nativeAudio";
 
 const SPEED_MIN = 0.5;
 const SPEED_MAX = 16;
 const SPEED_STEP = 0.1;
 const SPEED_KEY = "speed_player_speed";
+const PITCH_PRESERVE_MAX_RATE = 3;
 
 function formatTime(seconds: number): string {
   if (!isFinite(seconds) || seconds < 0) return "0:00";
@@ -43,6 +46,15 @@ function loadSavedSpeed(): number {
   return clampSpeed(quantizeSpeed(saved));
 }
 
+function applyPlaybackTuning(audio: HTMLAudioElement, speed: number): void {
+  audio.playbackRate = speed;
+  const preservePitch = speed <= PITCH_PRESERVE_MAX_RATE;
+  // High-speed time-stretching is expensive on some engines and can cause stutter.
+  (audio as HTMLAudioElement & { webkitPreservesPitch?: boolean }).webkitPreservesPitch =
+    preservePitch;
+  audio.preservesPitch = preservePitch;
+}
+
 export default function Player() {
   const params = useParams<{ asin: string }>();
   const [, navigate] = useLocation();
@@ -54,6 +66,9 @@ export default function Player() {
   const lastSyncAtRef = useRef(0);
   const syncInFlightRef = useRef(false);
   const progressFlushInFlightRef = useRef(false);
+  const playbackPositionRef = useRef(0);
+  const nativeListenerHandlesRef = useRef<PluginListenerHandle[]>([]);
+  const nativeToggleInFlightRef = useRef(false);
 
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -63,8 +78,10 @@ export default function Player() {
   const [remoteResumeMs, setRemoteResumeMs] = useState<number | null>(null);
   const [chapterInfo, setChapterInfo] = useState<ChapterInfo | null>(null);
   const [chaptersModalOpen, setChaptersModalOpen] = useState(false);
+  const [verifiedRemoteFileUrl, setVerifiedRemoteFileUrl] = useState<string | null>(null);
 
   const asin = params.asin ?? "";
+  const useNativePlayback = isNative();
   const job = byAsin.get(asin);
   const book = session ? getBook(asin, session) : null;
   const remoteJobId =
@@ -116,20 +133,110 @@ export default function Player() {
     };
   }, [remoteFileUrl, remoteJobId, session, asin]);
 
-  const displaySrc = localPlaybackUrl ?? remoteFileUrl;
+  useEffect(() => {
+    setVerifiedRemoteFileUrl(null);
+    if (!remoteFileUrl || localPlaybackUrl) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    void fetch(remoteFileUrl, {
+      headers: { Range: "bytes=0-1" },
+      signal: controller.signal,
+    })
+      .then((resp) => {
+        if (cancelled) return;
+        if (!resp.ok) {
+          setMediaError(
+            `Audio file endpoint unavailable (HTTP ${resp.status}). ` +
+              "If the server just restarted, refresh and try again.",
+          );
+          return;
+        }
+        const ct = (resp.headers.get("content-type") ?? "").toLowerCase();
+        if (!ct.includes("audio/")) {
+          setMediaError(
+            "Audio response was not a playable media type. " +
+              "Refresh and retry; if it persists, remove and re-download this title.",
+          );
+          return;
+        }
+        setVerifiedRemoteFileUrl(remoteFileUrl);
+        setMediaError(null);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setMediaError(
+          "Could not reach audio endpoint (server unavailable). " +
+            "Refresh after the API server is up.",
+        );
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [remoteFileUrl, localPlaybackUrl]);
+
+  const displaySrc = localPlaybackUrl ?? verifiedRemoteFileUrl;
+  const checkingRemoteSource =
+    !!remoteFileUrl && !localPlaybackUrl && !verifiedRemoteFileUrl && !mediaError;
   const title = book?.title ?? job?.title ?? "Audiobook";
   const author = book?.authors.join(", ") ?? "";
   const coverUrl = book?.coverUrl ?? null;
   const lastPositionMs = book?.lastPositionMs ?? null;
   const effectiveResumeMs = remoteResumeMs ?? lastPositionMs;
 
+  const applyNativeStatus = useCallback((status: NativeAudioStatus) => {
+    const nextPos = Number.isFinite(status.position) ? Math.max(0, status.position) : 0;
+    const nextDuration = Number.isFinite(status.duration) ? Math.max(0, status.duration) : 0;
+    playbackPositionRef.current = nextPos;
+    setCurrentTime(nextPos);
+    setDuration(nextDuration);
+    setPlaying(Boolean(status.playing));
+
+    const reportedRate = Number.isFinite(status.rate) ? clampSpeed(quantizeSpeed(status.rate)) : null;
+    if (reportedRate == null) return;
+    setSpeed((prev) => (Math.abs(prev - reportedRate) >= SPEED_STEP / 2 ? reportedRate : prev));
+  }, []);
+
   const skip = useCallback((seconds: number) => {
+    if (useNativePlayback) {
+      const next = Math.max(0, Math.min(duration, playbackPositionRef.current + seconds));
+      playbackPositionRef.current = next;
+      setCurrentTime(next);
+      void NativeAudio.seekTo({ position: next }).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        setMediaError(msg || "Seek failed");
+      });
+      return;
+    }
     const audio = audioRef.current;
     if (!audio) return;
-    audio.currentTime = Math.max(0, Math.min(duration, audio.currentTime + seconds));
-  }, [duration]);
+    const next = Math.max(0, Math.min(duration, audio.currentTime + seconds));
+    playbackPositionRef.current = next;
+    setCurrentTime(next);
+    audio.currentTime = next;
+  }, [duration, useNativePlayback]);
 
   const togglePlay = useCallback(() => {
+    if (useNativePlayback) {
+      if (nativeToggleInFlightRef.current) return;
+      nativeToggleInFlightRef.current = true;
+      void (async () => {
+        try {
+          const status = await NativeAudio.getStatus();
+          const next = status.playing
+            ? await NativeAudio.pause()
+            : await NativeAudio.play();
+          applyNativeStatus(next);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          setMediaError(msg || "Playback failed");
+        } finally {
+          nativeToggleInFlightRef.current = false;
+        }
+      })();
+      return;
+    }
     const audio = audioRef.current;
     if (!audio) return;
     if (audio.paused) {
@@ -140,14 +247,13 @@ export default function Player() {
     } else {
       audio.pause();
     }
-  }, []);
+  }, [applyNativeStatus, useNativePlayback]);
 
   const pushProgress = useCallback(
     (force: boolean) => {
       if (!session || !asin) return;
-      const audio = audioRef.current;
-      if (!audio) return;
-      const positionMs = Math.max(0, Math.floor(audio.currentTime * 1000));
+      const seconds = playbackPositionRef.current;
+      const positionMs = Math.max(0, Math.floor(seconds * 1000));
       if (!Number.isFinite(positionMs)) return;
       const now = Date.now();
       if (!force) {
@@ -177,19 +283,23 @@ export default function Player() {
     [asin, session],
   );
 
-  // Apply speed + preservesPitch when audio or speed changes
+  // Apply speed and conditionally preserve pitch at lower rates only.
   useEffect(() => {
+    localStorage.setItem(SPEED_KEY, String(speed));
+    if (useNativePlayback) {
+      void NativeAudio.setRate({ rate: speed }).catch(() => {
+        // ignore setRate before native player is prepared
+      });
+      return;
+    }
     const audio = audioRef.current;
     if (!audio) return;
-    audio.playbackRate = speed;
-    // preservesPitch is the standard; webkitPreservesPitch for older Safari
-    (audio as HTMLAudioElement & { webkitPreservesPitch?: boolean }).webkitPreservesPitch = true;
-    audio.preservesPitch = true;
-    localStorage.setItem(SPEED_KEY, String(speed));
-  }, [speed]);
+    applyPlaybackTuning(audio, speed);
+  }, [speed, useNativePlayback]);
 
   // Set MediaSession metadata for lock-screen controls
   useEffect(() => {
+    if (useNativePlayback) return;
     if (!("mediaSession" in navigator)) return;
     navigator.mediaSession.metadata = new MediaMetadata({
       title,
@@ -206,13 +316,78 @@ export default function Player() {
       navigator.mediaSession.setActionHandler("seekbackward", null);
       navigator.mediaSession.setActionHandler("seekforward", null);
     };
-  }, [title, author, coverUrl, skip]);
+  }, [title, author, coverUrl, skip, useNativePlayback]);
 
   useEffect(() => {
+    if (!displaySrc) return;
+
+    if (useNativePlayback) {
+      let cancelled = false;
+      const clearNativeListeners = () => {
+        for (const handle of nativeListenerHandlesRef.current) {
+          void handle.remove();
+        }
+        nativeListenerHandlesRef.current = [];
+      };
+      void (async () => {
+        try {
+          clearNativeListeners();
+          nativeListenerHandlesRef.current.push(
+            await NativeAudio.addListener("status", (status) => {
+              if (cancelled) return;
+              applyNativeStatus(status);
+              pushProgress(false);
+            }),
+          );
+          nativeListenerHandlesRef.current.push(
+            await NativeAudio.addListener("ended", () => {
+              if (cancelled) return;
+              setPlaying(false);
+              pushProgress(true);
+            }),
+          );
+          nativeListenerHandlesRef.current.push(
+            await NativeAudio.addListener("error", (err) => {
+              if (cancelled) return;
+              setPlaying(false);
+              setMediaError(err.message ?? "Native playback failed");
+            }),
+          );
+
+          const initial = await NativeAudio.prepare({ src: displaySrc, rate: speed });
+          if (cancelled) return;
+          applyNativeStatus(initial);
+
+          if (!resumeAppliedRef.current && effectiveResumeMs != null && effectiveResumeMs > 0) {
+            const resumeSeconds = Math.floor(effectiveResumeMs / 1000);
+            const resumed = await NativeAudio.seekTo({ position: resumeSeconds });
+            if (cancelled) return;
+            applyNativeStatus(resumed);
+            resumeAppliedRef.current = true;
+          }
+          setMediaError(null);
+        } catch (err) {
+          if (cancelled) return;
+          const msg = err instanceof Error ? err.message : String(err);
+          setMediaError(msg || "Failed to initialize native playback");
+          setPlaying(false);
+        }
+      })();
+
+      return () => {
+        cancelled = true;
+        clearNativeListeners();
+        void NativeAudio.unload().catch(() => {
+          // ignore cleanup race during rapid source changes
+        });
+      };
+    }
+
     const audio = audioRef.current;
-    if (!audio || !displaySrc) return;
+    if (!audio) return;
 
     const onTime = () => {
+      playbackPositionRef.current = audio.currentTime;
       setCurrentTime(audio.currentTime);
       if ("mediaSession" in navigator && duration > 0) {
         navigator.mediaSession.setPositionState({
@@ -226,10 +401,11 @@ export default function Player() {
     const onLoaded = () => {
       const d = audio.duration;
       setDuration(Number.isFinite(d) && d > 0 ? d : 0);
-      audio.playbackRate = speed;
+      applyPlaybackTuning(audio, speed);
       if (!resumeAppliedRef.current && effectiveResumeMs != null && effectiveResumeMs > 0) {
         audio.currentTime = Math.floor(effectiveResumeMs / 1000);
         setCurrentTime(audio.currentTime);
+        playbackPositionRef.current = audio.currentTime;
         resumeAppliedRef.current = true;
       }
       setMediaError(null);
@@ -309,12 +485,16 @@ export default function Player() {
       audio.removeEventListener("error", onError);
       audio.removeEventListener("ended", onEnded);
     };
-  }, [speed, duration, displaySrc, remoteFileUrl, effectiveResumeMs, pushProgress]);
+  }, [speed, duration, displaySrc, remoteFileUrl, effectiveResumeMs, pushProgress, applyNativeStatus, useNativePlayback]);
 
   useEffect(() => {
     resumeAppliedRef.current = false;
     lastSyncedPositionMsRef.current = 0;
     lastSyncAtRef.current = 0;
+    playbackPositionRef.current = 0;
+    setCurrentTime(0);
+    setDuration(0);
+    setPlaying(false);
     setRemoteResumeMs(null);
   }, [asin, job?.id]);
 
@@ -435,15 +615,31 @@ export default function Player() {
   }
 
   function onSeekbar(e: React.ChangeEvent<HTMLInputElement>) {
+    const next = Number(e.target.value);
+    if (!Number.isFinite(next)) return;
+    playbackPositionRef.current = next;
+    setCurrentTime(next);
+    if (useNativePlayback) {
+      void NativeAudio.seekTo({ position: next }).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        setMediaError(msg || "Seek failed");
+      });
+      return;
+    }
     const audio = audioRef.current;
     if (!audio) return;
-    audio.currentTime = Number(e.target.value);
+    audio.currentTime = next;
   }
 
   if (!displaySrc) {
+    const emptyStateMessage = checkingRemoteSource
+      ? "Checking download..."
+      : (mediaError ?? "Book not downloaded yet.");
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-gray-950 px-4 text-white">
-        <p className="text-gray-400">Book not downloaded yet.</p>
+        <p className={mediaError ? "text-center text-sm text-red-400" : "text-gray-400"}>
+          {emptyStateMessage}
+        </p>
         <button
           type="button"
           onClick={() => navigate("/library")}
@@ -636,9 +832,19 @@ export default function Player() {
                       key={`${ch.startOffsetMs}-${idx}`}
                       type="button"
                       onClick={() => {
-                        const audio = audioRef.current;
-                        if (!audio) return;
-                        audio.currentTime = Math.max(0, Math.floor(ch.startOffsetMs / 1000));
+                        const target = Math.max(0, Math.floor(ch.startOffsetMs / 1000));
+                        playbackPositionRef.current = target;
+                        setCurrentTime(target);
+                        if (useNativePlayback) {
+                          void NativeAudio.seekTo({ position: target }).catch((err: unknown) => {
+                            const msg = err instanceof Error ? err.message : String(err);
+                            setMediaError(msg || "Seek failed");
+                          });
+                        } else {
+                          const audio = audioRef.current;
+                          if (!audio) return;
+                          audio.currentTime = target;
+                        }
                         setChaptersModalOpen(false);
                       }}
                       className={`w-full rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${
@@ -660,14 +866,18 @@ export default function Player() {
         </div>
       )}
 
-      {/* Hidden audio element — key forces reload when job/url changes; playsInline helps iOS WebView */}
-      <audio
-        ref={audioRef}
-        key={`${asin}:${displaySrc}`}
-        src={displaySrc ?? undefined}
-        preload="metadata"
-        playsInline
-      />
+      {!useNativePlayback && (
+        <>
+          {/* Hidden audio element — key forces reload when job/url changes; playsInline helps iOS WebView */}
+          <audio
+            ref={audioRef}
+            key={`${asin}:${displaySrc}`}
+            src={displaySrc ?? undefined}
+            preload="metadata"
+            playsInline
+          />
+        </>
+      )}
     </div>
   );
 }

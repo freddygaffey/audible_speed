@@ -10,6 +10,7 @@ DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-/tmp/speed-ios-derived}"
 AUTOTEST_ARTIFACT_DIR="${AUTOTEST_ARTIFACT_DIR:-/tmp/speed-ios-autotest-$(date +%Y%m%d-%H%M%S)}"
 RESET_APP_STATE="${RESET_APP_STATE:-0}"
 OFFLINE_PROBE="${OFFLINE_PROBE:-0}"
+RUN_IOS_NATIVE_SPEED_MATRIX="${RUN_IOS_NATIVE_SPEED_MATRIX:-1}"
 
 log() {
   printf '[player-ios-autotest] %s\n' "$*"
@@ -240,11 +241,80 @@ fi
 
 log "Installing and launching app in simulator"
 xcrun simctl install "${IOS_UDID}" "${APP_PATH}"
-xcrun simctl launch "${IOS_UDID}" com.speed.player >"${AUTOTEST_ARTIFACT_DIR}/sim-launch.log"
+xcrun simctl terminate "${IOS_UDID}" com.speed.player >/dev/null 2>&1 || true
+if [[ "${RUN_IOS_NATIVE_SPEED_MATRIX}" == "1" ]]; then
+  xcrun simctl launch "${IOS_UDID}" com.speed.player --speed-autotest-native-audio >"${AUTOTEST_ARTIFACT_DIR}/sim-launch.log"
+else
+  xcrun simctl launch "${IOS_UDID}" com.speed.player >"${AUTOTEST_ARTIFACT_DIR}/sim-launch.log"
+fi
 record_check "sim_install_launch" "pass" "bundle=com.speed.player"
 
-log "Recent app logs (last 20s)"
-xcrun simctl spawn "${IOS_UDID}" log show --last 20s --style compact --predicate 'process == "App"' | tail -n 120 >"${AUTOTEST_ARTIFACT_DIR}/app-log-tail.log" || true
+sleep 7
+log "Recent app logs (last 40s)"
+xcrun simctl spawn "${IOS_UDID}" log show --last 40s --style compact --predicate 'process == "App"' | tail -n 220 >"${AUTOTEST_ARTIFACT_DIR}/app-log-tail.log" || true
+
+if [[ "${RUN_IOS_NATIVE_SPEED_MATRIX}" == "1" ]]; then
+  AUTOTEST_REPORT_RAW="$(
+    xcrun simctl spawn "${IOS_UDID}" defaults read com.speed.player SpeedAutotestReportJson 2>/dev/null || true
+  )"
+  printf '%s\n' "${AUTOTEST_REPORT_RAW}" >"${AUTOTEST_ARTIFACT_DIR}/speed-matrix-report.raw.txt"
+  if python3 - "${AUTOTEST_ARTIFACT_DIR}/speed-matrix-report.raw.txt" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+raw_path = Path(sys.argv[1])
+raw = raw_path.read_text(errors="ignore").strip()
+if not raw:
+    print("FAIL\tmissing_report")
+    sys.exit(1)
+
+if raw.startswith('"') and raw.endswith('"'):
+    raw = bytes(raw[1:-1], "utf-8").decode("unicode_escape")
+
+try:
+    report = json.loads(raw)
+except Exception:
+    print("FAIL\tinvalid_report_json")
+    sys.exit(1)
+
+required_rates = [1.0, 2.0, 4.0, 8.0, 16.0]
+state = report.get("state")
+results = report.get("results") or []
+by_rate = {}
+for item in results:
+    try:
+        rate = float(item.get("rate"))
+    except Exception:
+        continue
+    by_rate[rate] = item
+
+missing = [r for r in required_rates if r not in by_rate]
+bad = []
+for rate, item in by_rate.items():
+    if not (item.get("monotonic") and item.get("speedOk")):
+        bad.append(rate)
+
+if state != "pass" or missing or bad:
+    details = []
+    if state != "pass":
+        details.append(f"state={state!r}")
+    if missing:
+        details.append(f"missing_rates={missing}")
+    if bad:
+        details.append(f"failing_rates={bad}")
+    print("FAIL\t" + ",".join(details))
+    sys.exit(1)
+
+print("PASS\tall_rates_ok")
+PY
+  then
+    record_check "ios_native_speed_matrix" "pass" "rates=1,2,4,8,16"
+  else
+    record_check "ios_native_speed_matrix" "fail" "see speed-matrix-report.raw.txt"
+    exit 9
+  fi
+fi
 
 if [[ "${OFFLINE_PROBE}" == "1" ]]; then
   if curl -sS -m 2 "http://127.0.0.1:9/__speed_offline_probe__" >/dev/null 2>&1; then

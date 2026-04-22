@@ -49,6 +49,15 @@ export type VaultEntry = { asin: string; jobId: string; savedAt: number; bytes: 
 
 const inFlight = new Map<string, Promise<void>>();
 
+function toByteSize(raw: unknown): number {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) return Math.floor(raw);
+  if (typeof raw === "string") {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return 0;
+}
+
 async function ensureVaultRootDir(): Promise<void> {
   await Filesystem.mkdir({
     path: VAULT_ROOT,
@@ -223,7 +232,7 @@ export function ensureVaultCopy(params: VaultIdentity & { asin: string; jobId: s
     let bytes = 0;
     try {
       const st = await Filesystem.stat({ path: rel, directory: Directory.Data });
-      bytes = typeof st.size === "number" ? st.size : 0;
+      bytes = toByteSize(st.size);
     } catch {
       bytes = 0;
     }
@@ -317,13 +326,14 @@ export async function getVaultTotalBytes(): Promise<number> {
         continue;
       }
       for (const f of files.files) {
-        if (f.type !== "file" || !f.name.endsWith(".m4b")) continue;
+        // `type` can be missing on some native platforms; rely on extension + stat.
+        if (!f.name.endsWith(".m4b")) continue;
         try {
           const st = await Filesystem.stat({
             path: `${scopePath}/${f.name}`,
             directory: Directory.Data,
           });
-          if (typeof st.size === "number") total += st.size;
+          total += toByteSize(st.size);
         } catch {
           /* skip */
         }

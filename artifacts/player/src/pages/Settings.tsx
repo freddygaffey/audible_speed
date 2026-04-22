@@ -2,7 +2,10 @@ import { useState, useEffect, useCallback, type FormEvent } from "react";
 import { useLocation } from "wouter";
 import { ArrowLeft, Check, Loader2 } from "lucide-react";
 import { useAuth } from "../lib/authContext";
-import { setActivationBytes as apiSetActivationBytes } from "../lib/apiClient";
+import {
+  setActivationBytes as apiSetActivationBytes,
+  deleteAllDownloadedFiles,
+} from "../lib/apiClient";
 import {
   saveActivationBytes,
   loadActivationBytes,
@@ -22,6 +25,7 @@ export default function Settings() {
   const [errorMsg, setErrorMsg] = useState("");
   const [vaultBytes, setVaultBytes] = useState(0);
   const [vaultBusy, setVaultBusy] = useState(false);
+  const [vaultNotice, setVaultNotice] = useState<string>("");
 
   const refreshVaultSize = useCallback(async () => {
     if (!isNative()) return;
@@ -65,9 +69,25 @@ export default function Settings() {
   async function handleClearOfflineVault() {
     if (!isNative()) return;
     setVaultBusy(true);
+    setVaultNotice("");
+    let serverCleanupSkipped = false;
     try {
       await clearAllVaults();
+      if (session) {
+        try {
+          // Prevent immediate re-population from existing server "done" jobs.
+          await deleteAllDownloadedFiles();
+        } catch {
+          // Local clear still succeeds even if server cleanup is offline/unreachable.
+          serverCleanupSkipped = true;
+        }
+      }
       setVaultBytes(0);
+      setVaultNotice(
+        serverCleanupSkipped
+          ? "Cleared local audio. Server cleanup skipped (offline or unavailable)."
+          : "Offline audio cleared.",
+      );
     } finally {
       setVaultBusy(false);
     }
@@ -142,6 +162,7 @@ export default function Settings() {
               <p className="text-xs text-gray-400">
                 {vaultBusy ? "…" : `Using about ${formatVaultBytes(vaultBytes)} on this device.`}
               </p>
+              {vaultNotice && <p className="text-xs text-gray-500">{vaultNotice}</p>}
               <button
                 type="button"
                 disabled={vaultBusy || vaultBytes === 0}
