@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
+import { fileURLToPath } from "node:url";
 import { logger } from "./logger.js";
 import { getDownloadUrl } from "./audibleClient.js";
 import { flushSession, getSession } from "./audibleAuth.js";
@@ -30,16 +31,41 @@ function formatFfmpegFailure(
  * Run ffmpeg with stderr capped (only kept for error messages). Progress spam is avoided
  * via -nostats -loglevel error; on failure we attach the real ffmpeg text for debugging.
  */
-function runFfmpeg(args: string[]): Promise<void> {
+interface RunFfmpegOptions {
+  onOutTimeMs?: (outTimeMs: number) => void;
+}
+
+function runFfmpeg(args: string[], options: RunFfmpegOptions = {}): Promise<void> {
   // warning: enough context on failure; error often omits lines that explain exit 69 / DRM.
-  const fullArgs = ["-hide_banner", "-nostats", "-loglevel", "warning", ...args];
+  const fullArgs = [
+    "-hide_banner",
+    "-nostats",
+    "-loglevel",
+    "warning",
+    "-progress",
+    "pipe:1",
+    ...args,
+  ];
   return new Promise((resolve, reject) => {
+    let stdoutRemainder = "";
     const chunks: Buffer[] = [];
     let stderrBytes = 0;
 
     const child = spawn("ffmpeg", fullArgs, {
-      stdio: ["ignore", "ignore", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
+    });
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdoutRemainder += chunk.toString("utf8");
+      const lines = stdoutRemainder.split(/\r?\n/);
+      stdoutRemainder = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("out_time_ms=")) continue;
+        const outTimeMs = Number.parseInt(line.slice("out_time_ms=".length), 10);
+        if (!Number.isFinite(outTimeMs) || outTimeMs < 0) continue;
+        options.onOutTimeMs?.(outTimeMs);
+      }
     });
 
     child.stderr?.on("data", (chunk: Buffer) => {
@@ -151,6 +177,22 @@ function summarizeProbe(probe: ProbeResult | undefined): string {
   return `probe=format:${fmt},audio:${codec},ch:${ch},rate:${rate}`;
 }
 
+async function verifyDecodableAudio(pathToFile: string): Promise<void> {
+  const args = [
+    "-v",
+    "error",
+    "-xerror",
+    "-i",
+    pathToFile,
+    "-map",
+    "0:a:0",
+    "-f",
+    "null",
+    "-",
+  ];
+  await runFfmpeg(args);
+}
+
 interface DownloadArtifact {
   filePath: string;
   finalUrl: string;
@@ -206,8 +248,20 @@ function explainAaxFailure(stderr: string, hasActivationBytes: boolean): string 
   return null;
 }
 
-// Downloads directory
-const DOWNLOADS_DIR = path.join(process.cwd(), "downloads");
+function resolvedDownloadsDir(): string {
+  const envDir = process.env.SPEED_DOWNLOADS_DIR?.trim();
+  if (envDir) return path.resolve(envDir);
+
+  // Primary: service WorkingDirectory should be api-server root.
+  const cwdDir = path.join(process.cwd(), "downloads");
+  if (fs.existsSync(process.cwd())) return cwdDir;
+
+  // Fallback for unusual launch contexts.
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(here, "..", "downloads");
+}
+
+const DOWNLOADS_DIR = resolvedDownloadsDir();
 if (!fs.existsSync(DOWNLOADS_DIR)) {
   fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 }
@@ -227,12 +281,24 @@ export interface DownloadJob {
   progress: number;
   format: string;
   outputPath: string | null;
+  outputBytes: number | null;
   error: string | null;
+  errorClass: "network" | "drm" | "disk" | "decode" | "other" | null;
+  expiresAt: string | null;
+  transferredAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 const jobs = new Map<string, DownloadJob>();
+const DONE_TTL_MS = Math.max(
+  5 * 60 * 1000,
+  Number(process.env.SPEED_DOWNLOAD_DONE_TTL_MS ?? 2 * 60 * 60 * 1000),
+);
+const SWEEP_INTERVAL_MS = Math.max(
+  30 * 1000,
+  Number(process.env.SPEED_DOWNLOAD_SWEEP_INTERVAL_MS ?? 60 * 1000),
+);
 
 function makeId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -257,6 +323,7 @@ function pruneMissingDoneJobs(): void {
 
 export function listJobs(): DownloadJob[] {
   pruneMissingDoneJobs();
+  sweepExpiredFinishedJobs();
   return Array.from(jobs.values()).sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
@@ -264,6 +331,7 @@ export function listJobs(): DownloadJob[] {
 
 export function getJob(id: string): DownloadJob | undefined {
   pruneMissingDoneJobs();
+  sweepExpiredFinishedJobs();
   return jobs.get(id);
 }
 
@@ -273,6 +341,69 @@ function unlinkSafe(filePath: string): void {
   } catch (err) {
     logger.warn({ filePath, err }, "Failed to delete file");
   }
+}
+
+function classifyDownloadError(message: string): DownloadJob["errorClass"] {
+  const m = message.toLowerCase();
+  if (m.includes("network") || m.includes("http ")) return "network";
+  if (m.includes("widevine") || m.includes("drm") || m.includes("activation_bytes")) return "drm";
+  if (m.includes("insufficient server disk space") || m.includes("disk is full") || m.includes("enospc")) {
+    return "disk";
+  }
+  if (m.includes("ffmpeg") || m.includes("decode") || m.includes("invalid data")) return "decode";
+  return "other";
+}
+
+function computeExpiryIso(baseMs = Date.now()): string {
+  return new Date(baseMs + DONE_TTL_MS).toISOString();
+}
+
+function sweepExpiredFinishedJobs(): number {
+  const now = Date.now();
+  let removed = 0;
+  for (const [id, job] of [...jobs.entries()]) {
+    if (job.status !== "done") continue;
+    if (!job.expiresAt) continue;
+    if (Date.parse(job.expiresAt) > now) continue;
+    if (job.outputPath) unlinkSafe(job.outputPath);
+    jobs.delete(id);
+    removed++;
+  }
+  return removed;
+}
+
+function getFreeDiskBytes(): number | null {
+  try {
+    const st = fs.statfsSync(DOWNLOADS_DIR);
+    const bavail = Number(st.bavail ?? 0);
+    const bsize = Number(st.bsize ?? 0);
+    if (!Number.isFinite(bavail) || !Number.isFinite(bsize) || bavail <= 0 || bsize <= 0) {
+      return null;
+    }
+    return Math.floor(bavail * bsize);
+  } catch {
+    return null;
+  }
+}
+
+function pruneOldestFinishedDownloadsForSpace(targetFreeBytes: number): number {
+  let free = getFreeDiskBytes();
+  if (free == null || free >= targetFreeBytes) return 0;
+
+  const candidates = Array.from(jobs.values())
+    .filter((j) => j.status === "done" && j.outputPath && fs.existsSync(j.outputPath))
+    .sort((a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime());
+
+  let removed = 0;
+  for (const job of candidates) {
+    if (!job.outputPath) continue;
+    unlinkSafe(job.outputPath);
+    jobs.delete(job.id);
+    removed++;
+    free = getFreeDiskBytes();
+    if (free != null && free >= targetFreeBytes) break;
+  }
+  return removed;
 }
 
 /** Remove on-disk media for an ASIN (finished or partial download). */
@@ -287,6 +418,7 @@ function unlinkMediaForAsin(asin: string): void {
  * Returns how many job rows were removed (0 if only orphan files were deleted).
  */
 export function removeDownloadForAsin(asin: string): { jobsRemoved: number } {
+  sweepExpiredFinishedJobs();
   let jobsRemoved = 0;
   for (const [id, job] of [...jobs.entries()]) {
     if (job.asin === asin) {
@@ -300,6 +432,7 @@ export function removeDownloadForAsin(asin: string): { jobsRemoved: number } {
 
 /** Delete every job and every .m4b / .mp3 / .aax under the downloads directory. */
 export function removeAllDownloads(): { jobsRemoved: number; filesRemoved: number } {
+  sweepExpiredFinishedJobs();
   const jobsRemoved = jobs.size;
   jobs.clear();
 
@@ -320,6 +453,7 @@ export function removeAllDownloads(): { jobsRemoved: number; filesRemoved: numbe
 }
 
 export function cancelJob(id: string): boolean {
+  sweepExpiredFinishedJobs();
   const job = jobs.get(id);
   if (!job) return false;
   removeDownloadForAsin(job.asin);
@@ -338,6 +472,33 @@ function rehydrateDoneJobsFromDisk(): void {
     try {
       const st = fs.statSync(outputPath);
       if (!st.isFile() || st.size < 512) continue;
+        const probe = spawnSync(
+          "ffprobe",
+          [
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            outputPath,
+          ],
+          { encoding: "utf8" },
+        );
+        const probeOut = (probe.stdout ?? "").toString().trim().toLowerCase();
+        if (probe.status !== 0 || probeOut !== "audio") {
+          logger.warn(
+            {
+              outputPath,
+              probeStatus: probe.status,
+              probeErr: (probe.stderr ?? "").toString().trim().slice(0, 400),
+            },
+            "Skipping corrupted media artifact during rehydrate",
+          );
+          continue;
+        }
       const id = makeDiskJobId(asin, format);
       if (jobs.has(id)) continue;
       const ts = st.mtime.toISOString();
@@ -349,7 +510,11 @@ function rehydrateDoneJobsFromDisk(): void {
         progress: 100,
         format,
         outputPath,
+        outputBytes: st.size,
         error: null,
+        errorClass: null,
+        transferredAt: null,
+        expiresAt: computeExpiryIso(st.mtimeMs),
         createdAt: ts,
         updatedAt: ts,
       });
@@ -367,6 +532,13 @@ export async function startDownload(
   format: "mp3" | "m4b" = "mp3"
 ): Promise<DownloadJob> {
   pruneMissingDoneJobs();
+  sweepExpiredFinishedJobs();
+  // Keep headroom so ffmpeg temp/outputs don't crash the process on tiny disks.
+  const minFreeBytes = 800 * 1024 * 1024;
+  const pruned = pruneOldestFinishedDownloadsForSpace(minFreeBytes);
+  if (pruned > 0) {
+    logger.warn({ pruned, minFreeBytes }, "Pruned old finished downloads to recover disk space");
+  }
   // Check for existing job
   for (const job of jobs.values()) {
     if (job.asin === asin && job.status === "done" && job.outputPath && fs.existsSync(job.outputPath)) {
@@ -394,7 +566,11 @@ export async function startDownload(
     progress: 0,
     format,
     outputPath: null,
+    outputBytes: null,
     error: null,
+    errorClass: null,
+    expiresAt: null,
+    transferredAt: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -403,7 +579,12 @@ export async function startDownload(
   // Run asynchronously
   runDownload(job).catch((err) => {
     logger.error({ err, jobId: id, asin }, "Download job failed");
-    update(job, { status: "error", error: String(err.message ?? err) });
+    const message = String(err.message ?? err);
+    update(job, {
+      status: "error",
+      error: message,
+      errorClass: classifyDownloadError(message),
+    });
   });
 
   return job;
@@ -429,6 +610,7 @@ async function runDownload(job: DownloadJob): Promise<void> {
   let widevineDefaultKid: string | undefined;
   let widevineSelectedKid: string | undefined;
   let widevineError: string | undefined;
+  let cencCandidateKeys: CencCandidateKey[] = [];
   try {
     const lic = await getDownloadUrl(job.asin);
     downloadUrl = lic.offlineUrl;
@@ -461,6 +643,11 @@ async function runDownload(job: DownloadJob): Promise<void> {
         widevineCookieHeader = widevine.cookieHeader;
         widevineDefaultKid = widevine.mpd.defaultKid;
         widevineSelectedKid = widevine.kid;
+        cencCandidateKeys = widevine.candidateKeys.map((k) => ({
+          keyHex: k.keyHex,
+          ivHex: k.ivHex,
+          kid: k.kid,
+        }));
         if (!licenseCencKeyHex) {
           licenseCencKeyHex = widevine.keyHex;
           licenseCencIvHex = widevine.ivHex ?? licenseCencIvHex;
@@ -551,6 +738,7 @@ async function runDownload(job: DownloadJob): Promise<void> {
     },
     licenseCencKeyHex,
     licenseCencIvHex,
+    cencCandidateKeys,
   );
 
   if (!fs.existsSync(outPath) || fs.statSync(outPath).size < 512) {
@@ -559,6 +747,12 @@ async function runDownload(job: DownloadJob): Promise<void> {
   const outputProbe = await runFfprobe(outPath);
   if (!outputProbe.ok || !outputProbe.audioStream) {
     throw new Error(`Converted output is invalid. ${summarizeProbe(outputProbe)}`);
+  }
+  try {
+    await verifyDecodableAudio(outPath);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Converted output failed decode verification. ${msg.slice(0, 1200)}`);
   }
 
   // Clean up source .aax
@@ -570,6 +764,9 @@ async function runDownload(job: DownloadJob): Promise<void> {
     status: "done",
     progress: 100,
     outputPath: outPath,
+    outputBytes: fs.statSync(outPath).size,
+    errorClass: null,
+    expiresAt: computeExpiryIso(),
   });
 
   logger.info({ jobId: job.id, asin: job.asin, outPath }, "Download complete");
@@ -613,6 +810,24 @@ async function downloadFile(
   }
 
   const totalSize = parseInt(resp.headers.get("content-length") ?? "0", 10);
+  if (totalSize > 0) {
+    const free = getFreeDiskBytes();
+    const reserveBytes = 200 * 1024 * 1024;
+    const required = totalSize + reserveBytes;
+    if (free != null && free < required) {
+      const pruned = pruneOldestFinishedDownloadsForSpace(required);
+      const freeAfterPrune = getFreeDiskBytes();
+      if (freeAfterPrune != null && freeAfterPrune < required) {
+        throw new Error(
+          `Insufficient server disk space (${Math.floor(freeAfterPrune / (1024 * 1024))}MB free; ` +
+            `${Math.floor(required / (1024 * 1024))}MB required). ` +
+            (pruned > 0
+              ? "Some old downloads were auto-removed; retry if needed."
+              : "Remove old downloads on server and retry."),
+        );
+      }
+    }
+  }
   const fileStream = fs.createWriteStream(destPath);
   let downloaded = 0;
 
@@ -623,6 +838,19 @@ async function downloadFile(
   const reader = resp.body.getReader();
 
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = (err: unknown) => {
+      if (settled) return;
+      settled = true;
+      fileStream.destroy();
+      reject(err);
+    };
+    fileStream.on("error", (err) => {
+      const msg = (err as NodeJS.ErrnoException).code === "ENOSPC"
+        ? "Server disk is full while downloading source file"
+        : `File write failed: ${(err as Error).message}`;
+      fail(new Error(msg));
+    });
     const pump = async () => {
       try {
         while (true) {
@@ -636,19 +864,19 @@ async function downloadFile(
           }
         }
         fileStream.end();
-        fileStream.on("finish", () =>
+        fileStream.on("finish", () => {
+          if (settled) return;
+          settled = true;
           resolve({
             filePath: destPath,
             finalUrl,
             contentType,
             contentLength: totalSize,
             bytesWritten: downloaded,
-          }),
-        );
-        fileStream.on("error", reject);
+          });
+        });
       } catch (err) {
-        fileStream.destroy();
-        reject(err);
+        fail(err);
       }
     };
     pump();
@@ -683,6 +911,7 @@ async function transcodeToM4b(
   useActivationBytes: boolean,
   cencKeyHex?: string,
   cencIvHex?: string,
+  onOutTimeMs?: (outTimeMs: number) => void,
 ): Promise<void> {
   const isRemote = /^https?:\/\//i.test(aaxPath);
   const cencPrefix: string[] = [];
@@ -710,7 +939,7 @@ async function transcodeToM4b(
     "-y",
     outPath,
   ];
-  await runFfmpeg(args);
+  await runFfmpeg(args, { onOutTimeMs });
 }
 
 interface ConversionContext {
@@ -724,6 +953,12 @@ interface ConversionContext {
   widevineDefaultKid?: string;
   widevineSelectedKid?: string;
   widevineError?: string;
+}
+
+interface CencCandidateKey {
+  keyHex: string;
+  ivHex?: string;
+  kid?: string;
 }
 
 function splitFfmpegMessage(msg: string): { head: string; stderr: string } {
@@ -781,6 +1016,7 @@ async function convertAax(
   ctx?: ConversionContext,
   cencKeyHex?: string,
   cencIvHex?: string,
+  cencCandidateKeys: CencCandidateKey[] = [],
 ): Promise<void> {
   const session = getSession();
   const storedActivation = session?.activationBytes;
@@ -797,6 +1033,20 @@ async function convertAax(
     } satisfies ConversionContext);
 
   const attemptsTried: string[] = [];
+  const parsedDurationSec = Number.parseFloat(context.inputProbe.format?.duration ?? "");
+  const durationMs =
+    Number.isFinite(parsedDurationSec) && parsedDurationSec > 0
+      ? Math.floor(parsedDurationSec * 1000)
+      : null;
+  let highestConversionProgress = Math.max(job.progress, 80);
+  const onOutTimeMs = (outTimeMs: number) => {
+    if (!durationMs || durationMs <= 0) return;
+    const ratio = Math.max(0, Math.min(1, outTimeMs / durationMs));
+    const next = Math.max(80, Math.min(99, 80 + Math.floor(ratio * 19)));
+    if (next <= highestConversionProgress) return;
+    highestConversionProgress = next;
+    update(job, { progress: next });
+  };
 
   if (job.format === "m4b") {
     let lastErr: string | undefined;
@@ -806,17 +1056,35 @@ async function convertAax(
         "AAXC input requires decryption key/iv; conversion aborted before ffmpeg decode attempts.",
       );
     }
+    const cencAttempts: CencCandidateKey[] = [];
     if (cencKeyHex) {
+      cencAttempts.push({ keyHex: cencKeyHex, ivHex: cencIvHex });
+    }
+    for (const candidate of cencCandidateKeys) {
+      if (
+        cencAttempts.some(
+          (a) => a.keyHex === candidate.keyHex && (a.ivHex ?? "") === (candidate.ivHex ?? ""),
+        )
+      ) {
+        continue;
+      }
+      cencAttempts.push(candidate);
+    }
+    for (const [idx, candidate] of cencAttempts.entries()) {
       try {
-        attemptsTried.push("m4b_with_cenc_key");
+        const label = candidate.kid
+          ? `m4b_with_cenc_key_${idx + 1}_kid_${candidate.kid}`
+          : `m4b_with_cenc_key_${idx + 1}`;
+        attemptsTried.push(label);
         await transcodeToM4b(
           aaxPath,
           outPath,
           undefined,
           undefined,
           false,
-          cencKeyHex,
-          cencIvHex,
+          candidate.keyHex,
+          candidate.ivHex,
+          onOutTimeMs,
         );
         return;
       } catch (err: unknown) {
@@ -831,6 +1099,9 @@ async function convertAax(
         licenseKeyHex,
         storedActivation,
         useActivationBytes,
+        undefined,
+        undefined,
+        onOutTimeMs,
       );
       return;
     } catch (err: unknown) {
@@ -852,6 +1123,9 @@ async function convertAax(
             licenseKeyHex,
             storedActivation,
             false,
+            undefined,
+            undefined,
+            onOutTimeMs,
           );
           return;
         } catch (e2: unknown) {
@@ -899,7 +1173,7 @@ async function convertAax(
   let lastErr: string | undefined;
   try {
     attemptsTried.push(useActivationBytes ? "mp3_with_activation" : "mp3_no_activation");
-    await runFfmpeg(ffmpegArgs);
+    await runFfmpeg(ffmpegArgs, { onOutTimeMs });
     return;
   } catch (err: unknown) {
     const msg = toErrorMessage(err);
@@ -926,7 +1200,7 @@ async function convertAax(
       ];
       try {
         attemptsTried.push("mp3_no_activation_fallback");
-        await runFfmpeg(retryArgs);
+        await runFfmpeg(retryArgs, { onOutTimeMs });
         return;
       } catch (e2: unknown) {
         lastErr = toErrorMessage(e2);
@@ -979,6 +1253,62 @@ function assertDownloadedPayloadLooksAudio(artifact: DownloadArtifact): string {
   }
 }
 
+export interface DownloadDiagnostics {
+  activeJobs: number;
+  doneJobs: number;
+  errorJobs: number;
+  queuedJobs: number;
+  tempBytes: number;
+  freeDiskBytes: number | null;
+  doneTtlMs: number;
+}
+
+export function getDownloadDiagnostics(): DownloadDiagnostics {
+  sweepExpiredFinishedJobs();
+  let activeJobs = 0;
+  let doneJobs = 0;
+  let errorJobs = 0;
+  let queuedJobs = 0;
+  let tempBytes = 0;
+  for (const job of jobs.values()) {
+    if (job.status === "done") {
+      doneJobs++;
+      if (job.outputPath && fs.existsSync(job.outputPath)) {
+        try {
+          tempBytes += fs.statSync(job.outputPath).size;
+        } catch {
+          // ignore
+        }
+      }
+      continue;
+    }
+    if (job.status === "error") {
+      errorJobs++;
+      continue;
+    }
+    if (job.status === "queued") queuedJobs++;
+    activeJobs++;
+  }
+  return {
+    activeJobs,
+    doneJobs,
+    errorJobs,
+    queuedJobs,
+    tempBytes,
+    freeDiskBytes: getFreeDiskBytes(),
+    doneTtlMs: DONE_TTL_MS,
+  };
+}
+
+export function confirmTransferredDownload(id: string): { removed: boolean; asin?: string } {
+  sweepExpiredFinishedJobs();
+  const job = jobs.get(id);
+  if (!job || job.status !== "done") return { removed: false };
+  const asin = job.asin;
+  removeDownloadForAsin(job.asin);
+  return { removed: true, asin };
+}
+
 export function getOutputPath(id: string): string | null {
   return jobs.get(id)?.outputPath ?? null;
 }
@@ -990,3 +1320,10 @@ export function setActivationBytes(bytes: string): void {
     flushSession();
   }
 }
+
+setInterval(() => {
+  const removed = sweepExpiredFinishedJobs();
+  if (removed > 0) {
+    logger.info({ removed, doneTtlMs: DONE_TTL_MS }, "Swept expired temporary downloads");
+  }
+}, SWEEP_INTERVAL_MS).unref();

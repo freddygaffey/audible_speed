@@ -3,10 +3,9 @@ require_relative '../../../../node_modules/.pnpm/@capacitor+ios@7.6.2_@capacitor
 platform :ios, '14.0'
 use_frameworks!
 
-# workaround to avoid Xcode caching of Pods that requires
-# Product -> Clean Build Folder after new Cordova plugins installed
-# Requires CocoaPods 1.6 or newer
-install! 'cocoapods', :disable_input_output_paths => true
+# Keep CocoaPods default input/output paths so Xcode can perform dependency analysis
+# (avoids persistent "[CP] ... will be run during every build" warnings).
+install! 'cocoapods'
 
 def capacitor_pods
   pod 'Capacitor', :path => '../../../../node_modules/.pnpm/@capacitor+ios@7.6.2_@capacitor+core@7.6.2/node_modules/@capacitor/ios'
@@ -21,4 +20,24 @@ end
 
 post_install do |installer|
   assertDeploymentTarget(installer)
+
+  # Keep Pods metadata current so Xcode doesn't nag about "recommended settings".
+  installer.pods_project.root_object.attributes["LastUpgradeCheck"] = "1600"
+
+  # Patch upstream Capacitor Filesystem source to remove an unused local (`responseType`)
+  # that emits a warning in Xcode 16+.
+  filesystem_swift = File.expand_path(
+    "../../../../node_modules/.pnpm/@capacitor+filesystem@7.1.8_@capacitor+core@7.6.2/node_modules/@capacitor/filesystem/ios/Sources/FilesystemPlugin/LegacyFilesystemImplementation.swift",
+    __dir__,
+  )
+  if File.exist?(filesystem_swift)
+    src = File.read(filesystem_swift)
+    patched = src.gsub(
+      'let responseType = call.getString("responseType", "text")',
+      '_ = call.getString("responseType", "text")',
+    )
+    if patched != src
+      File.write(filesystem_swift, patched)
+    end
+  end
 end

@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite --config vite.config.ts --host 0.0.0.0",
+    "dev:tunnel": "VITE_SPEED_API_ORIGIN=http://127.0.0.1:3001 vite --config vite.config.ts --host 0.0.0.0",
+    "dev:local": "VITE_SPEED_API_ORIGIN=http://127.0.0.1:3001 vite --config vite.config.ts --host 0.0.0.0",
     "build": "vite build --config vite.config.ts",
+    "build:tunnel": "VITE_SPEED_API_ORIGIN=http://127.0.0.1:3001 vite build --config vite.config.ts",
+    "build:local": "VITE_SPEED_API_ORIGIN=http://127.0.0.1:3001 vite build --config vite.config.ts",
     "preview": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "cap:sync": "cap sync",

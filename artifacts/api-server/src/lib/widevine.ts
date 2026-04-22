@@ -29,6 +29,7 @@ export interface WidevineResolution {
   keyHex: string;
   ivHex?: string;
   kid?: string;
+  candidateKeys: WidevineKeyRecord[];
   provider: "bridge";
   mpd: WidevineMpdMetadata;
   cookieHeader?: string;
@@ -352,6 +353,7 @@ export async function resolveWidevineDecryption(params: ResolveWidevineParams): 
     keyHex: chosen.keyHex,
     ivHex: chosen.ivHex,
     kid: chosen.kid,
+    candidateKeys: keys,
     provider: "bridge",
     mpd,
     cookieHeader:

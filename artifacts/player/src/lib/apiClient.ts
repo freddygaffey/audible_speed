@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { getApiBaseUrl } from "./platformConfig";
 
+const CHAPTER_CACHE_KEY = "speed_chapter_cache_v1";
+const PROGRESS_CACHE_KEY = "speed_progress_cache_v1";
+const PROGRESS_QUEUE_KEY = "speed_progress_queue_v1";
+const CHAPTER_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const PROGRESS_CACHE_MAX_AGE_MS = 2 * 60 * 1000;
+
 function parseJsonResponse(text: string, status: number): unknown {
   const trimmed = text.trim();
   if (!trimmed) {
@@ -16,10 +22,17 @@ function parseJsonResponse(text: string, status: number): unknown {
 }
 
 async function apiFetch<T>(schema: z.ZodType<T>, path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${getApiBaseUrl()}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-  });
+  const url = `${getApiBaseUrl()}${path}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Network request failed";
+    throw new Error(`Network error contacting ${url}: ${msg}`);
+  }
   const text = await res.text();
   const json = parseJsonResponse(text, res.status);
   if (!res.ok) {
@@ -217,6 +230,19 @@ export function deleteDownloadForAsin(asin: string) {
   );
 }
 
+const MarkTransferredResponseSchema = z.object({
+  message: z.string(),
+  asin: z.string().nullable().optional(),
+});
+
+export function markDownloadTransferred(jobId: string) {
+  return apiFetch(
+    MarkTransferredResponseSchema,
+    `/audible/download/${encodeURIComponent(jobId)}/transferred`,
+    { method: "POST" },
+  );
+}
+
 const DeleteAllDownloadsResponseSchema = z.object({
   message: z.string(),
   jobsRemoved: z.number(),
@@ -225,6 +251,22 @@ const DeleteAllDownloadsResponseSchema = z.object({
 
 export function deleteAllDownloadedFiles() {
   return apiFetch(DeleteAllDownloadsResponseSchema, "/audible/downloads", { method: "DELETE" });
+}
+
+export const DownloadDiagnosticsSchema = z.object({
+  activeJobs: z.number(),
+  doneJobs: z.number(),
+  errorJobs: z.number(),
+  queuedJobs: z.number(),
+  tempBytes: z.number(),
+  freeDiskBytes: z.number().nullable(),
+  doneTtlMs: z.number(),
+});
+
+export type DownloadDiagnostics = z.infer<typeof DownloadDiagnosticsSchema>;
+
+export function getDownloadDiagnostics() {
+  return apiFetch(DownloadDiagnosticsSchema, "/audible/diagnostics");
 }
 
 export function syncListeningProgress(asin: string, positionMs: number) {
@@ -263,6 +305,193 @@ export type ChapterInfo = z.infer<typeof ChapterInfoSchema>;
 
 export function getChapterInfo(asin: string) {
   return apiFetch(ChapterInfoSchema, `/audible/chapters/${encodeURIComponent(asin)}`);
+}
+
+type CachedChapterEntry = {
+  asin: string;
+  data: ChapterInfo;
+  savedAt: number;
+  version: number;
+  source: "server";
+};
+
+type CachedProgressEntry = {
+  asin: string;
+  data: ListeningProgress;
+  savedAt: number;
+  version: number;
+  source: "server" | "local";
+};
+
+export type CachedValue<T> = {
+  data: T;
+  savedAt: number;
+  source: "server" | "local";
+  version: number;
+  stale: boolean;
+};
+
+type ProgressQueueItem = {
+  asin: string;
+  positionMs: number;
+  queuedAt: number;
+  retries: number;
+};
+
+function readJsonStorage<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJsonStorage<T>(key: string, value: T): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore local storage quota issues
+  }
+}
+
+function readChapterCache(): Record<string, CachedChapterEntry> {
+  return readJsonStorage(CHAPTER_CACHE_KEY, {} as Record<string, CachedChapterEntry>);
+}
+
+function writeChapterCache(next: Record<string, CachedChapterEntry>): void {
+  writeJsonStorage(CHAPTER_CACHE_KEY, next);
+}
+
+function readProgressCache(): Record<string, CachedProgressEntry> {
+  return readJsonStorage(PROGRESS_CACHE_KEY, {} as Record<string, CachedProgressEntry>);
+}
+
+function writeProgressCache(next: Record<string, CachedProgressEntry>): void {
+  writeJsonStorage(PROGRESS_CACHE_KEY, next);
+}
+
+function readProgressQueue(): ProgressQueueItem[] {
+  return readJsonStorage(PROGRESS_QUEUE_KEY, [] as ProgressQueueItem[]);
+}
+
+function writeProgressQueue(next: ProgressQueueItem[]): void {
+  writeJsonStorage(PROGRESS_QUEUE_KEY, next);
+}
+
+export function getCachedChapterInfo(asin: string): CachedValue<ChapterInfo> | null {
+  const cache = readChapterCache()[asin];
+  if (!cache) return null;
+  const stale = Date.now() - cache.savedAt > CHAPTER_CACHE_MAX_AGE_MS;
+  return {
+    data: cache.data,
+    savedAt: cache.savedAt,
+    source: cache.source,
+    version: cache.version,
+    stale,
+  };
+}
+
+export async function getChapterInfoWithCache(asin: string): Promise<CachedValue<ChapterInfo>> {
+  const cached = getCachedChapterInfo(asin);
+  if (cached && !cached.stale) return cached;
+  const fresh = await getChapterInfo(asin);
+  const now = Date.now();
+  const next = readChapterCache();
+  next[asin] = { asin, data: fresh, savedAt: now, version: 1, source: "server" };
+  writeChapterCache(next);
+  return { data: fresh, savedAt: now, source: "server", version: 1, stale: false };
+}
+
+export function getCachedListeningProgress(asin: string): CachedValue<ListeningProgress> | null {
+  const cache = readProgressCache()[asin];
+  if (!cache) return null;
+  const stale = Date.now() - cache.savedAt > PROGRESS_CACHE_MAX_AGE_MS;
+  return {
+    data: cache.data,
+    savedAt: cache.savedAt,
+    source: cache.source,
+    version: cache.version,
+    stale,
+  };
+}
+
+function saveProgressCache(
+  asin: string,
+  progress: ListeningProgress,
+  source: "server" | "local",
+): CachedValue<ListeningProgress> {
+  const now = Date.now();
+  const next = readProgressCache();
+  next[asin] = { asin, data: progress, savedAt: now, version: 1, source };
+  writeProgressCache(next);
+  return { data: progress, savedAt: now, source, version: 1, stale: false };
+}
+
+export async function getListeningProgressWithCache(asin: string): Promise<CachedValue<ListeningProgress>> {
+  const cached = getCachedListeningProgress(asin);
+  if (cached && !cached.stale) return cached;
+  const fresh = await getListeningProgress(asin);
+  return saveProgressCache(asin, fresh, "server");
+}
+
+function enqueueProgressSync(asin: string, positionMs: number) {
+  const queue = readProgressQueue();
+  const deduped = queue.filter((item) => item.asin !== asin);
+  deduped.push({
+    asin,
+    positionMs,
+    queuedAt: Date.now(),
+    retries: 0,
+  });
+  writeProgressQueue(deduped);
+}
+
+export function getProgressQueueDepth(): number {
+  return readProgressQueue().length;
+}
+
+export async function flushProgressQueue(): Promise<void> {
+  const queue = readProgressQueue();
+  if (queue.length === 0) return;
+  const pending: ProgressQueueItem[] = [];
+  for (const item of queue) {
+    try {
+      await syncListeningProgress(item.asin, item.positionMs);
+      saveProgressCache(
+        item.asin,
+        { positionMs: item.positionMs, updatedAt: new Date().toISOString() },
+        "server",
+      );
+    } catch {
+      pending.push({ ...item, retries: item.retries + 1 });
+    }
+  }
+  writeProgressQueue(pending);
+}
+
+export async function syncListeningProgressQueued(
+  asin: string,
+  positionMs: number,
+): Promise<{ queued: boolean }> {
+  try {
+    await syncListeningProgress(asin, positionMs);
+    saveProgressCache(
+      asin,
+      { positionMs, updatedAt: new Date().toISOString() },
+      "server",
+    );
+    return { queued: false };
+  } catch {
+    enqueueProgressSync(asin, positionMs);
+    saveProgressCache(
+      asin,
+      { positionMs, updatedAt: new Date().toISOString() },
+      "local",
+    );
+    return { queued: true };
+  }
 }
 
 // ---------------------------------------------------------------------------

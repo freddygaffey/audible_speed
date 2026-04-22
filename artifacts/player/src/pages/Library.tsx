@@ -18,12 +18,30 @@ import {
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { fetchLibraryAll, type Book, type DownloadJob } from "../lib/apiClient";
-import { saveLibrary, loadLibrary } from "../lib/libraryCache";
+import { saveLibrary, loadLibrary, shouldRefreshLibrary } from "../lib/libraryCache";
 import { useDownloads } from "../hooks/useDownloads";
 import { useAuth } from "../lib/authContext";
 import { useMobilePreview } from "../lib/mobilePreviewContext";
+import { isNative } from "../lib/platformConfig";
 
 type SortMode = "recent" | "az" | "downloaded";
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  return "";
+}
+
+function isNetworkLikeError(err: unknown): boolean {
+  const msg = errorMessage(err).toLowerCase();
+  return (
+    msg.includes("network error contacting") ||
+    msg.includes("failed to fetch") ||
+    msg.includes("load failed") ||
+    msg.includes("network request failed") ||
+    msg.includes("timed out")
+  );
+}
 
 function formatRuntime(minutes: number | null) {
   if (!minutes) return null;
@@ -63,8 +81,9 @@ function DownloadButton({ book, job, onDownload }: {
   if (job?.status === "done" || book.status === "downloaded") {
     return (
       <button
+        type="button"
         onClick={onDownload}
-        className="flex items-center gap-1 text-xs text-green-400 hover:text-orange-400 transition-colors"
+        className="flex min-h-9 items-center gap-1 rounded-md px-1 py-1.5 text-xs text-green-400 touch-manipulation transition-colors hover:text-orange-400 active:text-orange-300"
         title="Play"
       >
         <Play className="h-3.5 w-3.5" />
@@ -78,7 +97,7 @@ function DownloadButton({ book, job, onDownload }: {
       <div className="space-y-1">
         <div className="flex items-center gap-1 text-xs text-orange-400">
           <Loader2 className="h-3 w-3 animate-spin" />
-          {job.status === "converting" ? "Converting…" : `${job.progress}%`}
+          {job.status === "converting" ? `Converting… ${Math.max(80, Math.min(99, job.progress))}%` : `${job.progress}%`}
         </div>
         {job.status === "converting" && (
           <p className="text-[10px] leading-tight text-gray-500">
@@ -98,26 +117,42 @@ function DownloadButton({ book, job, onDownload }: {
   if (job?.status === "error") {
     if (isNonRetriableDownloadError(job.error)) {
       return (
-        <span className="text-xs text-yellow-400" title={job.error ?? "Not downloadable"}>
-          Not downloadable
-        </span>
+        <div className="space-y-1">
+          <span className="text-xs text-yellow-400" title={job.error ?? "Not downloadable"}>
+            Not downloadable
+          </span>
+          {job.error && (
+            <p className="text-[10px] leading-tight text-yellow-500/90">
+              {job.error}
+            </p>
+          )}
+        </div>
       );
     }
     return (
-      <button
-        onClick={onDownload}
-        className="text-xs text-red-400 hover:text-red-300"
-        title={job.error ?? "Download failed"}
-      >
-        Retry
-      </button>
+      <div className="space-y-1">
+        <button
+          type="button"
+          onClick={onDownload}
+          className="min-h-9 rounded-md px-2 py-1.5 text-xs text-red-400 touch-manipulation transition-colors hover:text-red-300 active:text-red-200"
+          title={job.error ?? "Download failed"}
+        >
+          Retry
+        </button>
+        {job.error && (
+          <p className="text-[10px] leading-tight text-red-400/90">
+            {job.error}
+          </p>
+        )}
+      </div>
     );
   }
 
   return (
     <button
+      type="button"
       onClick={onDownload}
-      className="flex items-center gap-1 text-xs text-gray-400 hover:text-orange-400 transition-colors"
+      className="flex min-h-9 items-center gap-1 rounded-md px-1 py-1.5 text-xs text-gray-400 touch-manipulation transition-colors hover:text-orange-400 active:text-orange-300"
     >
       <Download className="h-3.5 w-3.5" />
       Download
@@ -138,13 +173,13 @@ function BookCard({ book, job, onDownload, onRemoveDownload, selectMode = false,
   const resumeLabel = formatResume(book.lastPositionMs, book.runtimeMinutes);
 
   return (
-    <div className="flex flex-col gap-2 rounded-xl bg-gray-900 p-3 transition-colors hover:bg-gray-800">
+    <div className="flex flex-col gap-2 rounded-xl bg-gray-900 p-3 touch-manipulation transition duration-150 ease-out hover:bg-gray-800 active:scale-[0.98]">
       <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-gray-800">
         {selectMode && (
           <button
             type="button"
             onClick={onToggleSelect}
-            className="absolute left-1 top-1 z-10 rounded bg-black/55 p-1 text-white hover:bg-black/70"
+            className="absolute left-1 top-1 z-10 flex h-9 w-9 items-center justify-center rounded-lg bg-black/55 text-white touch-manipulation hover:bg-black/70 active:scale-95"
             title={selected ? "Deselect" : "Select"}
           >
             {selected ? <CheckSquare className="h-4 w-4 text-orange-300" /> : <Square className="h-4 w-4" />}
@@ -183,7 +218,7 @@ function BookCard({ book, job, onDownload, onRemoveDownload, selectMode = false,
             <button
               type="button"
               onClick={onToggleSelect}
-              className="text-xs text-gray-300 hover:text-white"
+              className="min-h-9 rounded-md px-1 py-1.5 text-left text-xs text-gray-300 touch-manipulation hover:text-white active:text-white"
             >
               {selected ? "Selected" : "Select"}
             </button>
@@ -197,7 +232,7 @@ function BookCard({ book, job, onDownload, onRemoveDownload, selectMode = false,
                 e.stopPropagation();
                 onRemoveDownload();
               }}
-              className="flex-shrink-0 rounded p-1 text-gray-500 hover:bg-gray-800 hover:text-red-400"
+              className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-gray-500 touch-manipulation hover:bg-gray-800 hover:text-red-400 active:scale-95"
               title="Remove from device"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -260,10 +295,10 @@ export default function Library() {
         }
       : undefined,
     staleTime: 60 * 1000,
-    refetchOnMount: "always",
+    refetchOnMount: shouldRefreshLibrary(cached) ? "always" : false,
   });
 
-  const isOffline = !!error && !!cached;
+  const isOffline = !!error && !!cached && isNetworkLikeError(error);
   const allBooks = data?.books ?? [];
 
   const filteredBooks = useMemo(() => {
@@ -310,7 +345,7 @@ export default function Library() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 px-4 pb-8 pt-6">
+    <div className="min-h-screen bg-gray-950 px-4 pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(1.5rem,env(safe-area-inset-top))]">
       <div className="mx-auto max-w-5xl">
         {/* Header */}
         <div className="mb-4 flex items-center justify-between gap-3">
@@ -335,7 +370,7 @@ export default function Library() {
                     setSelectMode(true);
                     setSelectedAsins(new Set());
                   }}
-                  className="text-xs text-gray-400 hover:text-white"
+                  className="min-h-10 rounded-lg px-2 py-2 text-left text-xs text-gray-400 touch-manipulation hover:bg-gray-900 hover:text-white active:bg-gray-900"
                 >
                   Select for batch download
                 </button>
@@ -344,7 +379,7 @@ export default function Library() {
                   <button
                     type="button"
                     onClick={toggleSelectAllEligible}
-                    className="text-xs text-gray-300 hover:text-white"
+                    className="min-h-10 rounded-lg px-2 py-2 text-xs text-gray-300 touch-manipulation hover:bg-gray-900 hover:text-white active:bg-gray-900"
                   >
                     {selectableBooks.length > 0 &&
                     selectableBooks.every((b) => selectedAsins.has(b.asin))
@@ -363,7 +398,7 @@ export default function Library() {
                         setSelectedAsins(new Set());
                       });
                     }}
-                    className="text-xs text-orange-400 hover:text-orange-300 disabled:text-gray-600"
+                    className="min-h-10 rounded-lg px-2 py-2 text-xs text-orange-400 touch-manipulation hover:text-orange-300 active:text-orange-200 disabled:text-gray-600 disabled:active:scale-100"
                   >
                     Download selected ({selectedCount})
                   </button>
@@ -373,7 +408,7 @@ export default function Library() {
                       setSelectMode(false);
                       setSelectedAsins(new Set());
                     }}
-                    className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300"
+                    className="flex min-h-10 items-center gap-1 rounded-lg px-2 py-2 text-xs text-gray-500 touch-manipulation hover:bg-gray-900 hover:text-gray-300 active:bg-gray-900"
                   >
                     <X className="h-3 w-3" />
                     Cancel
@@ -394,33 +429,36 @@ export default function Library() {
                   }
                   void removeAllDownloads();
                 }}
-                className="mt-2 text-left text-xs text-gray-500 hover:text-red-400"
+                className="mt-2 min-h-10 rounded-lg px-2 py-2 text-left text-xs text-gray-500 touch-manipulation hover:bg-gray-900 hover:text-red-400 active:bg-gray-900"
               >
                 Remove all downloads…
               </button>
             )}
           </div>
-          <div className="flex shrink-0 items-center gap-1">
-            <button
-              type="button"
-              onClick={toggleMobilePreview}
-              className={`rounded-lg p-2 transition-colors ${
-                mobilePreview
-                  ? "bg-orange-500/15 text-orange-400"
-                  : "text-gray-400 hover:bg-gray-800 hover:text-white"
-              }`}
-              title={
-                mobilePreview
-                  ? "Turn off mobile width preview"
-                  : "Mobile width preview (~390px) — good for phone / offline layout checks"
-              }
-              aria-pressed={mobilePreview}
-            >
-              <Smartphone className="h-5 w-5" />
-            </button>
+          <div className="flex shrink-0 items-center gap-0.5">
+            {!isNative() && (
+              <button
+                type="button"
+                onClick={toggleMobilePreview}
+                className={`inline-flex h-11 w-11 items-center justify-center rounded-xl touch-manipulation transition duration-150 hover:bg-gray-800 active:scale-95 ${
+                  mobilePreview
+                    ? "bg-orange-500/15 text-orange-400"
+                    : "text-gray-400 hover:text-white"
+                }`}
+                title={
+                  mobilePreview
+                    ? "Turn off mobile width preview"
+                    : "Mobile width preview (~390px) — good for phone / offline layout checks"
+                }
+                aria-pressed={mobilePreview}
+              >
+                <Smartphone className="h-5 w-5" />
+              </button>
+            )}
             <Link
               href="/settings"
-              className="rounded-lg p-2 text-gray-400 hover:bg-gray-800 hover:text-white"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-xl text-gray-400 touch-manipulation transition duration-150 hover:bg-gray-800 hover:text-white active:scale-95"
+              aria-label="Settings"
             >
               <Settings className="h-5 w-5" />
             </Link>
@@ -436,13 +474,13 @@ export default function Library() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search title or author…"
-              className="w-full rounded-lg border border-gray-700 bg-gray-900 py-2 pl-9 pr-4 text-sm text-white placeholder-gray-500 focus:border-orange-500 focus:outline-none"
+              className="min-h-11 w-full rounded-lg border border-gray-700 bg-gray-900 py-2.5 pl-10 pr-4 text-base text-white placeholder-gray-500 focus:border-orange-500 focus:outline-none sm:text-sm"
             />
           </div>
           <select
             value={sort}
             onChange={(e) => setSort(e.target.value as SortMode)}
-            className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-300 focus:border-orange-500 focus:outline-none"
+            className="min-h-11 min-w-[7.5rem] rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-300 focus:border-orange-500 focus:outline-none"
           >
             <option value="recent">Recent</option>
             <option value="az">A–Z</option>
@@ -471,7 +509,11 @@ export default function Library() {
 
         {!isLoading && !isOffline && error && (
           <p className="text-sm text-red-400">
-            {error instanceof Error ? error.message : "Failed to load library"}
+            {error instanceof Error
+              ? error.message
+              : typeof error === "string"
+                ? error
+                : "Failed to load library"}
           </p>
         )}
 

@@ -50,6 +50,53 @@ When changing the API, edit `openapi.yaml` then run codegen. Do not hand-edit fi
 
 **Mockup sandbox** (`artifacts/mockup-sandbox`) — standalone Vite + Tailwind playground for UI mockups; not wired to the API.
 
+**Speed player** (`artifacts/player`) — Capacitor 7 + Vite + React; shipping shell for phone builds. API base URL is **`SPEED_API_ORIGIN`** in `artifacts/player/src/lib/platformConfig.ts` (default public URL; override at build time with **`VITE_SPEED_API_ORIGIN`**, e.g. for an SSH tunnel). All `fetch` paths use `${SPEED_API_ORIGIN}/api/...`. See `.env.tunnel.example` and `pnpm --filter @workspace/player run build:tunnel`.
+
+## VPS deploy + iOS simulator (Speed)
+
+Use this when running the Audible API on a droplet and testing the **player** on the iOS Simulator.
+
+**API install on Ubuntu (e.g. DigitalOcean)**  
+- From repo root: `sudo ./scripts/server-setup.sh --system` then `./scripts/server-setup.sh --app` (or a single `sudo ./scripts/server-setup.sh` as root). Installs Node 22, pnpm, ffmpeg, Python venv at `artifacts/api-server/.venv`, and builds `@workspace/api-server`.  
+- Env: copy `scripts/speed-api.env.example` to e.g. `/etc/speed/api.env` (`PORT=3001`, etc.).  
+- Systemd: `./scripts/server-setup.sh --print-systemd` → install unit with `EnvironmentFile=/etc/speed/api.env`, `WorkingDirectory` = `artifacts/api-server`, `ExecStart` = `node …/dist/index.mjs`, `PATH` prefixed with `artifacts/api-server/.venv/bin` so **`audible_auth.py`** runs with venv Python.  
+- **Python bridge** (`artifacts/api-server/src/lib/pythonBridge.ts`): prefers `artifacts/api-server/.venv/bin/python3` when present so `spawn` does not pick system `python3` without `audible`/`httpx`.
+- **Temp artifact policy**: downloaded/converted server files are temporary; phone confirms transfer via API and server sweeps expired done jobs. Tune with `SPEED_DOWNLOAD_DONE_TTL_MS` and `SPEED_DOWNLOAD_SWEEP_INTERVAL_MS`.
+- **Diagnostics**: `GET /api/healthz/runtime` and `GET /api/audible/diagnostics` expose queue depth, temp bytes, and free disk for ops checks.
+- **Current host hardening baseline**: service runs as non-root user **`fred`** (not `root`) with `UMask=0077`; sensitive files like `/etc/speed/api.env`, `.audible-session.json`, and `.pending-sessions.json` are owner-only/group-restricted.
+
+**Default client URL: plain HTTP to Node**  
+The player’s default **`SPEED_API_ORIGIN`** is **`http://<droplet-ip>:3001`** (Express listens on `*:3001`). No reverse proxy required. Open **inbound TCP 3001** on the cloud firewall if clients cannot connect.
+
+**Optional TLS (Caddy, nginx, etc.)**  
+If **`http://<ip>:3001`** is blocked (unrated IP, closed port) or you want HTTPS, add a proxy on 80/443 yourself (e.g. Caddy + Let’s Encrypt for `https://api.example.com` → `127.0.0.1:3001`) and set **`VITE_SPEED_API_ORIGIN`** to that URL. **sslip.io**-style hostnames are often blocked as “Dynamic DNS” on school/enterprise filters.
+
+**Locked-down networks**  
+Use **SSH tunnel + `build:tunnel`**, **`VITE_SPEED_API_ORIGIN`** to your own domain, IT allow-list, or hotspot—see below.
+
+**Updating the server over SSH**  
+- SSH as `fred`: `ssh fred@<droplet_ip>` (root login is no longer the default workflow).  
+- If changes are on `origin`: `cd /home/fred/audible_speed && git pull && pnpm --filter @workspace/api-server run build && sudo systemctl restart speed-api`.  
+- If only local commits exist: `scp` `artifacts/api-server/src/lib/pythonBridge.ts` and `artifacts/api-server/scripts/audible_auth.py` (and rebuild + restart), or commit and push then pull on the VPS.
+
+**iOS Simulator (player)**  
+- `pnpm --filter @workspace/player run build && pnpm --filter @workspace/player exec cap sync ios`  
+- Non-interactive device: `xcrun simctl list devices available | grep iPhone` → `cd artifacts/player && pnpm exec cap run ios --target <UDID>`  
+- `ios/App/App/Info.plist` already relaxes ATS for non-HTTPS / user API origins when needed.
+
+**Local `speed-api` on your Mac (Simulator → `127.0.0.1:3001`)**  
+When the droplet URL fails from the app but you want to test on the **iOS Simulator**, run the API locally and bake in **`http://127.0.0.1:3001`**:  
+1. From repo root (with Python venv for `audible_auth.py`): `export PORT=3001` and `export PATH="$PWD/artifacts/api-server/.venv/bin:$PATH"`, then `pnpm --filter @workspace/api-server run dev` (or `run build` + `run start`).  
+2. Confirm: `curl -sS http://127.0.0.1:3001/api/healthz` → `{"status":"ok"}`.  
+3. `pnpm --filter @workspace/player run build:local && pnpm --filter @workspace/player exec cap sync ios` (same as `build:tunnel`; Simulator treats `127.0.0.1` as the **host Mac**).  
+
+**SSH tunnel when web filters block the droplet (HTTP/HTTPS / Dynamic DNS)**  
+If you can **`ssh fred@<droplet>`** but browsers/Simulator cannot reach the public API URL (unrated IP, blocked sslip.io, etc.), forward the API to your Mac and point the player at loopback:  
+1. In a separate terminal: `ssh -N -L 3001:127.0.0.1:3001 fred@<droplet_ip>` (forwards remote `speed-api` to Mac `127.0.0.1:3001`).  
+2. Build the player with the tunnel URL baked in: `pnpm --filter @workspace/player run build:tunnel && pnpm --filter @workspace/player exec cap sync ios` (or `dev:tunnel` for Vite only).  
+3. The iOS Simulator uses **`127.0.0.1`** as the **host Mac** for loopback; a physical iPhone on Wi‑Fi does **not** see that tunnel unless you use something like Tailscale or a proxy on the LAN.  
+Agents/automation can still deploy over SSH as `fred` (`git pull`, `pnpm --filter @workspace/api-server run build`, `sudo systemctl restart speed-api`); the tunnel is a **client-side** workaround for locked-down networks.
+
 ## Ports (Replit)
 
 `api-server` uses `PORT`; externally-visible ports from `.replit`: 8080, 8081 (→80), 19791 (→3000), 19984 (→3002, libation), 19985 (→3003). Don't hard-code ports — read `PORT`.

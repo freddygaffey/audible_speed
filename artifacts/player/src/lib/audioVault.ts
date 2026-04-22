@@ -37,12 +37,45 @@ function indexRelPath(hash: string): string {
   return `${scopeDir(hash)}/index.json`;
 }
 
-type IndexEntry = { jobId: string; savedAt: number; bytes: number };
+type IndexEntry = {
+  jobId: string;
+  savedAt: number;
+  bytes: number;
+  source: "server-transfer";
+  version: 1;
+};
 type VaultIndexFile = { v: 1; entries: Record<string, IndexEntry> };
+export type VaultEntry = { asin: string; jobId: string; savedAt: number; bytes: number };
 
 const inFlight = new Map<string, Promise<void>>();
 
+async function ensureVaultRootDir(): Promise<void> {
+  await Filesystem.mkdir({
+    path: VAULT_ROOT,
+    directory: Directory.Data,
+    recursive: true,
+  });
+}
+
+async function listVaultScopes(): Promise<Set<string>> {
+  await ensureVaultRootDir();
+  const root = await Filesystem.readdir({ path: VAULT_ROOT, directory: Directory.Data });
+  return new Set(root.files.map((f) => f.name));
+}
+
 async function readIndex(hash: string): Promise<VaultIndexFile> {
+  await Filesystem.mkdir({
+    path: scopeDir(hash),
+    directory: Directory.Data,
+    recursive: true,
+  });
+  const scopeEntries = await Filesystem.readdir({
+    path: scopeDir(hash),
+    directory: Directory.Data,
+  });
+  if (!scopeEntries.files.some((f) => f.name === "index.json")) {
+    return { v: 1, entries: {} };
+  }
   try {
     const { data } = await Filesystem.readFile({
       path: indexRelPath(hash),
@@ -105,6 +138,43 @@ export async function getLocalPlaybackUrl(params: VaultIdentity & { asin: string
   return Capacitor.convertFileSrc(uri);
 }
 
+/** Returns a local playback URL for this ASIN regardless of current server job id. */
+export async function getAnyLocalPlaybackUrl(
+  params: VaultIdentity & { asin: string },
+): Promise<string | null> {
+  if (!isNativeVault()) return null;
+  const { serverUrl, username, marketplace, asin } = params;
+  const hash = vaultScopeHash(serverUrl, username, marketplace);
+  const index = await readIndex(hash);
+  if (!index.entries[asin]) return null;
+  try {
+    await Filesystem.stat({
+      path: audioRelPath(hash, asin),
+      directory: Directory.Data,
+    });
+  } catch {
+    return null;
+  }
+  const { uri } = await Filesystem.getUri({
+    directory: Directory.Data,
+    path: audioRelPath(hash, asin),
+  });
+  return Capacitor.convertFileSrc(uri);
+}
+
+/** Read local vault entries for the current server/account scope. */
+export async function listVaultEntries(identity: VaultIdentity): Promise<VaultEntry[]> {
+  if (!isNativeVault()) return [];
+  const hash = vaultScopeHash(identity.serverUrl, identity.username, identity.marketplace);
+  const index = await readIndex(hash);
+  return Object.entries(index.entries).map(([asin, ent]) => ({
+    asin,
+    jobId: ent.jobId,
+    savedAt: ent.savedAt,
+    bytes: ent.bytes,
+  }));
+}
+
 /**
  * Downloads the finished M4B from the API into the app sandbox (native only).
  */
@@ -160,7 +230,16 @@ export function ensureVaultCopy(params: VaultIdentity & { asin: string; jobId: s
 
     const next: VaultIndexFile = {
       v: 1,
-      entries: { ...index.entries, [asin]: { jobId, savedAt: Date.now(), bytes } },
+      entries: {
+        ...index.entries,
+        [asin]: {
+          jobId,
+          savedAt: Date.now(),
+          bytes,
+          source: "server-transfer",
+          version: 1,
+        },
+      },
     };
     await writeIndex(hash, next);
   })();
@@ -175,6 +254,8 @@ export function ensureVaultCopy(params: VaultIdentity & { asin: string; jobId: s
 export async function removeVaultAsin(params: VaultIdentity & { asin: string }): Promise<void> {
   if (!isNativeVault()) return;
   const hash = vaultScopeHash(params.serverUrl, params.username, params.marketplace);
+  const scopes = await listVaultScopes();
+  if (!scopes.has(hash)) return;
   const index = await readIndex(hash);
   if (!index.entries[params.asin]) return;
   const { [params.asin]: _removed, ...rest } = index.entries;
@@ -192,6 +273,8 @@ export async function removeVaultAsin(params: VaultIdentity & { asin: string }):
 export async function clearVaultScope(identity: VaultIdentity): Promise<void> {
   if (!isNativeVault()) return;
   const hash = vaultScopeHash(identity.serverUrl, identity.username, identity.marketplace);
+  const scopes = await listVaultScopes();
+  if (!scopes.has(hash)) return;
   try {
     await Filesystem.rmdir({
       path: scopeDir(hash),
@@ -206,6 +289,7 @@ export async function clearVaultScope(identity: VaultIdentity): Promise<void> {
 /** Remove all `speed_vault` trees (Settings “clear offline audio”). */
 export async function clearAllVaults(): Promise<void> {
   if (!isNativeVault()) return;
+  await ensureVaultRootDir();
   try {
     await Filesystem.rmdir({
       path: VAULT_ROOT,
@@ -222,6 +306,7 @@ export async function getVaultTotalBytes(): Promise<number> {
   if (!isNativeVault()) return 0;
   let total = 0;
   try {
+    await ensureVaultRootDir();
     const scopes = await Filesystem.readdir({ path: VAULT_ROOT, directory: Directory.Data });
     for (const name of scopes.files.map((f) => f.name)) {
       const scopePath = `${VAULT_ROOT}/${name}`;

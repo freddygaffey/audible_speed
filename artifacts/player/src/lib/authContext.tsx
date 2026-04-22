@@ -79,7 +79,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const stored = loadActivationBytes();
         if (stored) setActivationBytes(stored).catch(() => {});
       } else {
-        dispatch({ type: "CLEAR" });
+        // Keep cached auth on transient status misses; explicit Sign out still clears.
+        const cached = loadStored();
+        if (cached) {
+          dispatch({ type: "SET_SESSION", session: cached });
+        } else {
+          dispatch({ type: "CLEAR" });
+        }
       }
     } catch {
       const cached = loadStored();

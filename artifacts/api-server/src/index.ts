@@ -11,6 +11,8 @@ process.on("unhandledRejection", (reason) => {
 });
 
 process.on("uncaughtException", (err) => {
+  // Ensure startup/runtime crashes are visible even if logger transport fails to flush.
+  console.error("[speed-api] uncaughtException", err);
   logger.fatal({ err }, "Uncaught exception");
   process.exit(1);
 });

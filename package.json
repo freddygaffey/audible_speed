@@ -11,7 +11,9 @@
     "player:cap:sync": "pnpm --filter @workspace/player exec cap sync",
     "player:cap:sync:ios": "pnpm --filter @workspace/player exec cap sync ios",
     "player:cap:open:ios": "pnpm --filter @workspace/player exec cap open ios",
-    "player:ios": "pnpm run player:build && pnpm run player:cap:sync:ios && pnpm run player:cap:open:ios"
+    "player:ios": "pnpm run player:build && pnpm run player:cap:sync:ios && pnpm run player:cap:open:ios",
+    "player:test:ios:auto": "RUN_DOWNLOAD_TEST=0 bash ./scripts/player-ios-autotest.sh",
+    "player:test:ios:auto:full": "RUN_DOWNLOAD_TEST=1 bash ./scripts/player-ios-autotest.sh"
   },
   "private": true,
   "devDependencies": {

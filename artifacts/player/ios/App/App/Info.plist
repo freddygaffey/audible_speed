@@ -38,6 +38,9 @@
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
+		<!-- WKWebView (Capacitor) fetch/XHR over HTTP (IP/LAN/non-TLS) -->
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
 		<!-- User-supplied API base (http://host:port) may be LAN, VPS IP, or any domain without HTTPS. -->
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>

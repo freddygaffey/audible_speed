@@ -17,6 +17,8 @@ import {
   getJob,
   startDownload,
   cancelJob,
+  confirmTransferredDownload,
+  getDownloadDiagnostics,
   removeDownloadForAsin,
   removeAllDownloads,
   setActivationBytes,
@@ -360,6 +362,27 @@ router.delete("/audible/downloads/asin/:asin", async (req, res): Promise<void> =
   });
 });
 
+router.post("/audible/download/:id/transferred", async (req, res): Promise<void> => {
+  if (!getSession()) {
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+  const id = String(req.params.id ?? "").trim();
+  if (!id) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const result = confirmTransferredDownload(id);
+  if (!result.removed) {
+    res.status(404).json({ error: "Done job not found" });
+    return;
+  }
+  res.json({
+    message: "Transferred artifact deleted",
+    asin: result.asin ?? null,
+  });
+});
+
 router.delete("/audible/downloads", async (_req, res): Promise<void> => {
   if (!getSession()) { res.status(401).json({ error: "Not authenticated" }); return; }
 
@@ -373,6 +396,14 @@ router.delete("/audible/downloads", async (_req, res): Promise<void> => {
 
 router.get("/audible/downloads", async (_req, res): Promise<void> => {
   res.json(listJobs());
+});
+
+router.get("/audible/diagnostics", async (_req, res): Promise<void> => {
+  if (!getSession()) {
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+  res.json(getDownloadDiagnostics());
 });
 
 router.post("/audible/download", async (req, res): Promise<void> => {

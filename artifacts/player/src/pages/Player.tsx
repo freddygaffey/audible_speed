@@ -5,8 +5,15 @@ import { useDownloads } from "../hooks/useDownloads";
 import { getBook, upsertBookProgress } from "../lib/libraryCache";
 import { useAuth } from "../lib/authContext";
 import { getApiBaseUrl, getStoredServerUrl, isNative } from "../lib/platformConfig";
-import { getChapterInfo, type ChapterInfo, getListeningProgress, syncListeningProgress } from "../lib/apiClient";
-import { ensureVaultCopy, getLocalPlaybackUrl } from "../lib/audioVault";
+import {
+  flushProgressQueue,
+  getCachedListeningProgress,
+  getChapterInfoWithCache,
+  getListeningProgressWithCache,
+  type ChapterInfo,
+  syncListeningProgressQueued,
+} from "../lib/apiClient";
+import { ensureVaultCopy, getAnyLocalPlaybackUrl, getLocalPlaybackUrl } from "../lib/audioVault";
 
 const SPEED_MIN = 0.5;
 const SPEED_MAX = 16;
@@ -46,6 +53,7 @@ export default function Player() {
   const lastSyncedPositionMsRef = useRef(0);
   const lastSyncAtRef = useRef(0);
   const syncInFlightRef = useRef(false);
+  const progressFlushInFlightRef = useRef(false);
 
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -59,20 +67,33 @@ export default function Player() {
   const asin = params.asin ?? "";
   const job = byAsin.get(asin);
   const book = session ? getBook(asin, session) : null;
-  const remoteFileUrl =
-    job?.status === "done" ? `${getApiBaseUrl()}/audible/download/${job.id}/file` : null;
+  const remoteJobId =
+    job?.status === "done" && !job.id.startsWith("local:") ? job.id : null;
+  const remoteFileUrl = remoteJobId ? `${getApiBaseUrl()}/audible/download/${remoteJobId}/file` : null;
   const [localPlaybackUrl, setLocalPlaybackUrl] = useState<string | null>(null);
 
   useEffect(() => {
     setLocalPlaybackUrl(null);
-    if (!remoteFileUrl || !session) return;
+    if (!session) return;
     if (!isNative()) return;
-    const jobId = job?.id;
-    if (!jobId) return;
     let cancelled = false;
     const asinNow = asin;
     const serverUrl = getStoredServerUrl();
     if (!serverUrl) return;
+    void getAnyLocalPlaybackUrl({
+      serverUrl,
+      username: session.username,
+      marketplace: session.marketplace,
+      asin: asinNow,
+    }).then((url) => {
+      if (!cancelled && asin === asinNow) setLocalPlaybackUrl(url);
+    });
+    const jobId = remoteJobId;
+    if (!remoteFileUrl || !jobId) {
+      return () => {
+        cancelled = true;
+      };
+    }
     void getLocalPlaybackUrl({
       serverUrl,
       username: session.username,
@@ -93,7 +114,7 @@ export default function Player() {
     return () => {
       cancelled = true;
     };
-  }, [remoteFileUrl, session, asin, job?.id]);
+  }, [remoteFileUrl, remoteJobId, session, asin]);
 
   const displaySrc = localPlaybackUrl ?? remoteFileUrl;
   const title = book?.title ?? job?.title ?? "Audiobook";
@@ -138,7 +159,7 @@ export default function Player() {
       }
       if (syncInFlightRef.current) return;
       syncInFlightRef.current = true;
-      void syncListeningProgress(asin, positionMs)
+      void syncListeningProgressQueued(asin, positionMs)
         .then(() => {
           lastSyncedPositionMsRef.current = positionMs;
           lastSyncAtRef.current = Date.now();
@@ -295,20 +316,30 @@ export default function Player() {
     lastSyncedPositionMsRef.current = 0;
     lastSyncAtRef.current = 0;
     setRemoteResumeMs(null);
-  }, [asin, displaySrc]);
+  }, [asin, job?.id]);
 
   useEffect(() => {
     let cancelled = false;
     if (!asin || !session) return;
-    void getListeningProgress(asin)
-      .then((progress) => {
+    const cached = getCachedListeningProgress(asin);
+    if (cached?.data.positionMs != null) {
+      setRemoteResumeMs(cached.data.positionMs);
+      upsertBookProgress(
+        asin,
+        cached.data.positionMs,
+        cached.data.updatedAt ?? new Date().toISOString(),
+        session,
+      );
+    }
+    void getListeningProgressWithCache(asin)
+      .then((cachedProgress) => {
         if (cancelled) return;
-        if (progress.positionMs != null) {
-          setRemoteResumeMs(progress.positionMs);
+        if (cachedProgress.data.positionMs != null) {
+          setRemoteResumeMs(cachedProgress.data.positionMs);
           upsertBookProgress(
             asin,
-            progress.positionMs,
-            progress.updatedAt ?? new Date().toISOString(),
+            cachedProgress.data.positionMs,
+            cachedProgress.data.updatedAt ?? new Date().toISOString(),
             session,
           );
         }
@@ -324,9 +355,9 @@ export default function Player() {
   useEffect(() => {
     let cancelled = false;
     if (!asin || !session) return;
-    void getChapterInfo(asin)
-      .then((info) => {
-        if (!cancelled) setChapterInfo(info);
+    void getChapterInfoWithCache(asin)
+      .then((cachedInfo) => {
+        if (!cancelled) setChapterInfo(cachedInfo.data);
       })
       .catch(() => {
         if (!cancelled) setChapterInfo(null);
@@ -335,6 +366,27 @@ export default function Player() {
       cancelled = true;
     };
   }, [asin, session]);
+
+  useEffect(() => {
+    const flush = () => {
+      if (progressFlushInFlightRef.current) return;
+      progressFlushInFlightRef.current = true;
+      void flushProgressQueue().finally(() => {
+        progressFlushInFlightRef.current = false;
+      });
+    };
+    flush();
+    const onOnline = () => flush();
+    const onVisible = () => {
+      if (!document.hidden) flush();
+    };
+    window.addEventListener("online", onOnline);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
 
   const chapterList = chapterInfo?.chapters ?? [];
   const currentMs = Math.floor(currentTime * 1000);
@@ -388,11 +440,15 @@ export default function Player() {
     audio.currentTime = Number(e.target.value);
   }
 
-  if (!remoteFileUrl) {
+  if (!displaySrc) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-gray-950 text-white">
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-gray-950 px-4 text-white">
         <p className="text-gray-400">Book not downloaded yet.</p>
-        <button onClick={() => navigate("/library")} className="text-sm text-orange-400 hover:text-orange-300">
+        <button
+          type="button"
+          onClick={() => navigate("/library")}
+          className="min-h-11 rounded-xl px-4 py-2 text-sm text-orange-400 touch-manipulation transition-colors hover:text-orange-300 active:text-orange-200"
+        >
           ← Back to library
         </button>
       </div>
@@ -402,10 +458,12 @@ export default function Player() {
   return (
     <div className="flex min-h-screen flex-col bg-gray-950 text-white">
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 pt-6 pb-2">
+      <div className="flex items-center gap-2 px-4 pb-2 pt-[max(1.5rem,env(safe-area-inset-top))]">
         <button
+          type="button"
           onClick={() => navigate("/library")}
-          className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-800 hover:text-white"
+          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-gray-400 touch-manipulation transition duration-150 hover:bg-gray-800 hover:text-white active:scale-95"
+          aria-label="Back to library"
         >
           <ArrowLeft className="h-5 w-5" />
         </button>
@@ -416,7 +474,7 @@ export default function Player() {
       </div>
 
       {/* Main content */}
-      <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6">
+      <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
         {/* Cover */}
         <div className="flex h-56 w-56 items-center justify-center overflow-hidden rounded-2xl bg-gray-800 shadow-2xl">
           {coverUrl ? (
@@ -453,21 +511,30 @@ export default function Player() {
         </div>
 
         {/* Transport controls */}
-        <div className="flex items-center gap-8">
-          <button onClick={() => skip(-30)} className="flex flex-col items-center gap-0.5 text-gray-400 hover:text-white">
+        <div className="flex items-center gap-6 sm:gap-8">
+          <button
+            type="button"
+            onClick={() => skip(-30)}
+            className="flex min-h-[3.25rem] min-w-[3.25rem] touch-manipulation flex-col items-center justify-center gap-0.5 rounded-xl text-gray-400 transition active:scale-95 hover:text-white"
+          >
             <SkipBack className="h-7 w-7" />
             <span className="text-[10px]">30s</span>
           </button>
           <button
+            type="button"
             onClick={togglePlay}
-            className="flex h-16 w-16 items-center justify-center rounded-full bg-orange-500 shadow-lg hover:bg-orange-600 active:scale-95 transition-transform"
+            className="flex h-16 w-16 touch-manipulation items-center justify-center rounded-full bg-orange-500 shadow-lg transition-transform hover:bg-orange-600 active:scale-95"
           >
             {playing
               ? <Pause className="h-8 w-8" />
               : <Play className="h-8 w-8 translate-x-0.5" />
             }
           </button>
-          <button onClick={() => skip(30)} className="flex flex-col items-center gap-0.5 text-gray-400 hover:text-white">
+          <button
+            type="button"
+            onClick={() => skip(30)}
+            className="flex min-h-[3.25rem] min-w-[3.25rem] touch-manipulation flex-col items-center justify-center gap-0.5 rounded-xl text-gray-400 transition active:scale-95 hover:text-white"
+          >
             <SkipForward className="h-7 w-7" />
             <span className="text-[10px]">30s</span>
           </button>
@@ -477,9 +544,10 @@ export default function Player() {
         <div className="w-full max-w-sm space-y-2">
           <div className="flex items-center justify-center gap-3">
           <button
+            type="button"
             onClick={() => changeSpeed(-SPEED_STEP)}
             disabled={speed <= SPEED_MIN}
-            className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-700 text-sm text-gray-400 hover:border-gray-500 hover:text-white disabled:opacity-30"
+            className="flex h-10 w-10 touch-manipulation items-center justify-center rounded-full border border-gray-700 text-base text-gray-400 transition active:scale-95 hover:border-gray-500 hover:text-white disabled:opacity-30"
           >
             −
           </button>
@@ -487,9 +555,10 @@ export default function Player() {
             <span className="text-lg font-bold text-orange-400">{speed.toFixed(1)}×</span>
           </div>
           <button
+            type="button"
             onClick={() => changeSpeed(SPEED_STEP)}
             disabled={speed >= SPEED_MAX}
-            className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-700 text-sm text-gray-400 hover:border-gray-500 hover:text-white disabled:opacity-30"
+            className="flex h-10 w-10 touch-manipulation items-center justify-center rounded-full border border-gray-700 text-base text-gray-400 transition active:scale-95 hover:border-gray-500 hover:text-white disabled:opacity-30"
           >
             +
           </button>
@@ -516,7 +585,7 @@ export default function Player() {
           <button
             type="button"
             onClick={() => setChaptersModalOpen(true)}
-            className="flex w-full max-w-sm items-center justify-center gap-2 rounded-xl border border-gray-700 bg-gray-900/80 py-3 text-sm font-medium text-gray-200 transition-colors hover:border-gray-500 hover:bg-gray-800 hover:text-white"
+            className="flex min-h-12 w-full max-w-sm touch-manipulation items-center justify-center gap-2 rounded-xl border border-gray-700 bg-gray-900/80 py-3 text-sm font-medium text-gray-200 transition-colors hover:border-gray-500 hover:bg-gray-800 hover:text-white active:scale-[0.99]"
           >
             <List className="h-4 w-4 text-orange-400" aria-hidden />
             Chapters
@@ -551,7 +620,7 @@ export default function Player() {
               <button
                 type="button"
                 onClick={() => setChaptersModalOpen(false)}
-                className="rounded-lg p-2 text-gray-400 hover:bg-gray-800 hover:text-white"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-xl text-gray-400 touch-manipulation transition hover:bg-gray-800 hover:text-white active:scale-95"
                 aria-label="Close"
               >
                 <X className="h-5 w-5" />

@@ -74,44 +74,48 @@ export default function Settings() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 px-4 pt-6 pb-8">
+    <div className="min-h-screen bg-gray-950 px-4 pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(1.5rem,env(safe-area-inset-top))]">
       <div className="mx-auto max-w-sm space-y-8">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={() => navigate("/library")}
-            className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-800 hover:text-white"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-gray-400 touch-manipulation transition duration-150 hover:bg-gray-800 hover:text-white active:scale-95"
+            aria-label="Back to library"
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
           <h1 className="text-xl font-bold text-white">Settings</h1>
         </div>
 
-        <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-white">Mobile layout preview</p>
-              <p className="mt-1 text-xs text-gray-500">
-                Pins the app to about phone width (~390px) so you can check library and player on a narrow column
-                (including offline). The choice is saved on this device.
-              </p>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={mobilePreview}
-              onClick={() => setMobilePreview(!mobilePreview)}
-              className={`relative mt-0.5 h-7 w-12 shrink-0 rounded-full transition-colors ${
-                mobilePreview ? "bg-orange-500" : "bg-gray-700"
-              }`}
-            >
-              <span
-                className={`absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
-                  mobilePreview ? "translate-x-5" : "translate-x-0"
+        {!isNative() && (
+          <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-white">Mobile layout preview</p>
+                <p className="mt-1 text-xs text-gray-500">
+                  Pins the app to about phone width (~390px) so you can check library and player on a narrow column
+                  (including offline). The choice is saved on this device.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={mobilePreview}
+                onClick={() => setMobilePreview(!mobilePreview)}
+                className={`relative mt-0.5 h-8 w-14 shrink-0 rounded-full touch-manipulation transition-colors active:opacity-90 ${
+                  mobilePreview ? "bg-orange-500" : "bg-gray-700"
                 }`}
-              />
-            </button>
+              >
+                <span
+                  className={`absolute top-1 left-1 h-6 w-6 rounded-full bg-white shadow transition-transform ${
+                    mobilePreview ? "translate-x-6" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
         {session && (
           <div className="rounded-xl border border-gray-800 bg-gray-900 p-4 space-y-1">
@@ -119,8 +123,9 @@ export default function Settings() {
             <p className="text-xs text-gray-400">{session.email}</p>
             <p className="text-xs text-gray-500">{session.marketplace.toUpperCase()}</p>
             <button
+              type="button"
               onClick={signOut}
-              className="mt-3 text-xs text-red-400 hover:text-red-300"
+              className="mt-3 min-h-10 rounded-lg px-2 py-2 text-left text-xs text-red-400 touch-manipulation hover:bg-gray-800/50 hover:text-red-300 active:bg-gray-800/70"
             >
               Sign out
             </button>
@@ -141,7 +146,7 @@ export default function Settings() {
                 type="button"
                 disabled={vaultBusy || vaultBytes === 0}
                 onClick={() => void handleClearOfflineVault()}
-                className="w-full rounded-lg border border-gray-700 px-4 py-2.5 text-sm text-gray-300 hover:border-gray-500 disabled:opacity-40"
+                className="min-h-11 w-full touch-manipulation rounded-lg border border-gray-700 px-4 py-2.5 text-sm text-gray-300 transition-colors hover:border-gray-500 active:bg-gray-800 disabled:opacity-40"
               >
                 Clear offline audio
               </button>
@@ -170,7 +175,7 @@ export default function Settings() {
               onChange={(e) => { setBytes(e.target.value); setStatus("idle"); }}
               placeholder="1a2b3c4d"
               maxLength={8}
-              className="w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 font-mono text-white placeholder-gray-600 focus:border-orange-500 focus:outline-none"
+              className="min-h-11 w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 font-mono text-base text-white placeholder-gray-600 focus:border-orange-500 focus:outline-none sm:text-sm"
             />
           </div>
           {errorMsg && <p className="text-sm text-red-400">{errorMsg}</p>}
@@ -178,7 +183,7 @@ export default function Settings() {
             <button
               type="submit"
               disabled={status === "saving"}
-              className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-orange-500 px-4 py-2.5 font-medium text-white hover:bg-orange-600 disabled:opacity-50"
+              className="flex min-h-11 flex-1 touch-manipulation items-center justify-center gap-2 rounded-lg bg-orange-500 px-4 py-2.5 font-medium text-white transition-colors hover:bg-orange-600 active:bg-orange-700 disabled:opacity-50"
             >
               {status === "saving" && <Loader2 className="h-4 w-4 animate-spin" />}
               {status === "saved" && <Check className="h-4 w-4" />}
@@ -188,7 +193,7 @@ export default function Settings() {
               <button
                 type="button"
                 onClick={handleClear}
-                className="rounded-lg border border-gray-700 px-4 py-2.5 text-sm text-gray-400 hover:border-gray-500"
+                className="min-h-11 touch-manipulation rounded-lg border border-gray-700 px-4 py-2.5 text-sm text-gray-400 transition-colors hover:border-gray-500 active:bg-gray-800"
               >
                 Clear
               </button>
