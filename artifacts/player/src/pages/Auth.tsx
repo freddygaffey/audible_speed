@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { useAuth } from "../lib/authContext";
 import { initLogin, completeFromUrl } from "../lib/apiClient";
-import { Loader2, ExternalLink, ClipboardPaste, Check } from "lucide-react";
-import { isNative, getStoredServerUrl, saveServerUrl } from "../lib/platformConfig";
+import { Loader2, ExternalLink, ClipboardPaste } from "lucide-react";
+import { isNative, SPEED_API_ORIGIN } from "../lib/platformConfig";
 
 const MARKETPLACES = [
   { id: "us", label: "United States" },
@@ -18,6 +18,12 @@ const MARKETPLACES = [
 
 type Step = "marketplace" | "awaiting";
 
+function formatAuthError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  return "Login failed";
+}
+
 export default function Auth() {
   const { setSession, refreshFromServer } = useAuth();
   const [step, setStep] = useState<Step>("marketplace");
@@ -27,9 +33,6 @@ export default function Auth() {
   const [pastedUrl, setPastedUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [serverUrl, setServerUrl] = useState(() => getStoredServerUrl());
-  const [serverSaved, setServerSaved] = useState(false);
-
   async function handleMarketplace(mkt: string) {
     setMarketplace(mkt);
     setLoading(true);
@@ -59,7 +62,7 @@ export default function Auth() {
         setError(result.error);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
+      setError(formatAuthError(err));
     } finally {
       setLoading(false);
     }
@@ -76,33 +79,9 @@ export default function Auth() {
         {step === "marketplace" && (
           <div className="space-y-3">
             {isNative() && (
-              <div className="space-y-2 rounded-lg border border-gray-800 bg-gray-900 p-3">
-                <p className="text-xs font-medium text-gray-300">API server URL (required on device)</p>
-                <p className="text-xs text-gray-500">
-                  Example: http://192.168.1.10:3001 — must reach the machine running the Speed API.
-                </p>
-                <input
-                  type="url"
-                  value={serverUrl}
-                  onChange={(e) => {
-                    setServerUrl(e.target.value);
-                    setServerSaved(false);
-                  }}
-                  placeholder="http://192.168.1.10:3001"
-                  className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-orange-500 focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    saveServerUrl(serverUrl);
-                    setServerSaved(true);
-                    setTimeout(() => setServerSaved(false), 1500);
-                  }}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-gray-700 px-3 py-2 text-xs text-gray-300 hover:border-gray-500"
-                >
-                  {serverSaved && <Check className="h-3.5 w-3.5 text-green-400" />}
-                  {serverSaved ? "Saved" : "Save server URL"}
-                </button>
+              <div className="rounded-lg border border-gray-800 bg-gray-900 p-3 text-xs text-gray-400">
+                API server:{" "}
+                <span className="break-all font-mono text-gray-300">{SPEED_API_ORIGIN}</span>
               </div>
             )}
             <p className="text-sm font-medium text-gray-300">Select your Audible marketplace</p>
@@ -161,7 +140,10 @@ export default function Auth() {
               <div className="space-y-2">
                 <p className="text-xs font-medium text-gray-300">Step 2 — Paste the redirect URL</p>
                 <p className="text-xs text-gray-500">
-                  After signing in you'll see an Audible page — copy the full URL from your browser's address bar and paste it here.
+                  After signing in, Amazon sends you to an Audible <span className="text-gray-400">maplanding</span> page.
+                  Copy the <span className="text-gray-400">entire</span> URL from the address bar — it must include{" "}
+                  <code className="text-orange-400/90">openid.oa2.authorization_code</code>. If that text is missing,
+                  sign in again and copy before navigating away.
                 </p>
                 <div className="flex gap-2">
                   <input

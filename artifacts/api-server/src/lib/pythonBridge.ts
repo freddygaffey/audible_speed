@@ -20,11 +20,15 @@ function resolveAudibleAuthScript(): string {
 }
 
 const SCRIPT = resolveAudibleAuthScript();
-logger.info({ script: SCRIPT }, "audible_auth.py resolved");
+const API_SERVER_ROOT = path.resolve(path.dirname(SCRIPT), "..");
+const VENV_PYTHON = path.join(API_SERVER_ROOT, ".venv", "bin", "python3");
+const PYTHON = existsSync(VENV_PYTHON) ? VENV_PYTHON : "python3";
+
+logger.info({ script: SCRIPT, python: PYTHON }, "audible_auth.py resolved");
 
 function runPython(args: string[], stdinData?: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("python3", [SCRIPT, ...args], {
+    const proc = spawn(PYTHON, [SCRIPT, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
@@ -53,7 +57,7 @@ function runPython(args: string[], stdinData?: string): Promise<unknown> {
       }
     });
     proc.on("error", (err) => {
-      reject(new Error(`Failed to spawn python3: ${err.message}`));
+      reject(new Error(`Failed to spawn ${PYTHON}: ${err.message}`));
     });
   });
 }

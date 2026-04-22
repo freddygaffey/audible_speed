@@ -1,17 +1,43 @@
 import { z } from "zod";
 import { getApiBaseUrl } from "./platformConfig";
 
+function parseJsonResponse(text: string, status: number): unknown {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    if (status >= 400) throw new Error(`HTTP ${status} (empty body)`);
+    return {};
+  }
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    if (status >= 400) throw new Error(trimmed.slice(0, 400) || `HTTP ${status}`);
+    throw new Error(`Invalid JSON from API: ${trimmed.slice(0, 200)}`);
+  }
+}
+
 async function apiFetch<T>(schema: z.ZodType<T>, path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });
-  const json: unknown = await res.json();
+  const text = await res.text();
+  const json = parseJsonResponse(text, res.status);
   if (!res.ok) {
-    const msg = (json as { error?: string })?.error ?? `HTTP ${res.status}`;
+    const body = json as { error?: string; message?: string; status?: string };
+    const msg =
+      body.error ??
+      body.message ??
+      (typeof body === "object" && body !== null && "status" in body
+        ? JSON.stringify(body).slice(0, 400)
+        : null) ??
+      `HTTP ${res.status}`;
     throw new Error(msg);
   }
-  return schema.parse(json);
+  const parsed = schema.safeParse(json);
+  if (!parsed.success) {
+    throw new Error(parsed.error.message || "Unexpected API response");
+  }
+  return parsed.data;
 }
 
 // ---------------------------------------------------------------------------

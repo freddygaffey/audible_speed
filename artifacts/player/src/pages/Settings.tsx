@@ -9,13 +9,8 @@ import {
   clearActivationBytes,
   isValidActivationBytes,
 } from "../lib/activationBytes";
-import { isNative, getStoredServerUrl, saveServerUrl } from "../lib/platformConfig";
-import {
-  clearAllVaults,
-  clearVaultScope,
-  formatVaultBytes,
-  getVaultTotalBytes,
-} from "../lib/audioVault";
+import { isNative, SPEED_API_ORIGIN } from "../lib/platformConfig";
+import { clearAllVaults, formatVaultBytes, getVaultTotalBytes } from "../lib/audioVault";
 import { useMobilePreview } from "../lib/mobilePreviewContext";
 
 export default function Settings() {
@@ -25,8 +20,6 @@ export default function Settings() {
   const [bytes, setBytes] = useState(() => loadActivationBytes() ?? "");
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
-  const [serverUrl, setServerUrl] = useState(() => getStoredServerUrl());
-  const [serverSaved, setServerSaved] = useState(false);
   const [vaultBytes, setVaultBytes] = useState(0);
   const [vaultBusy, setVaultBusy] = useState(false);
 
@@ -67,22 +60,6 @@ export default function Settings() {
     clearActivationBytes();
     setBytes("");
     setStatus("idle");
-  }
-
-  function handleSaveServerUrl() {
-    const prev = getStoredServerUrl().replace(/\/$/, "");
-    const next = serverUrl.trim().replace(/\/$/, "");
-    if (session && prev && next && prev !== next) {
-      void clearVaultScope({
-        serverUrl: prev,
-        username: session.username,
-        marketplace: session.marketplace,
-      });
-    }
-    saveServerUrl(serverUrl);
-    setServerSaved(true);
-    setTimeout(() => setServerSaved(false), 2000);
-    void refreshVaultSize();
   }
 
   async function handleClearOfflineVault() {
@@ -155,8 +132,7 @@ export default function Settings() {
             <div className="rounded-xl border border-gray-800 bg-gray-900 p-4 space-y-3">
               <p className="text-sm font-medium text-white">Offline audio vault</p>
               <p className="text-xs text-gray-500">
-                Finished downloads are copied here so you can play without re-downloading from the server. Changing
-                server URL clears the vault for the previous server only.
+                Finished downloads are copied here so you can play without re-downloading from the server.
               </p>
               <p className="text-xs text-gray-400">
                 {vaultBusy ? "…" : `Using about ${formatVaultBytes(vaultBytes)} on this device.`}
@@ -170,28 +146,10 @@ export default function Settings() {
                 Clear offline audio
               </button>
             </div>
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-300">Server URL</label>
-              <p className="mb-3 text-xs text-gray-500">
-                Address of your Speed API server (e.g. http://192.168.1.100:3001). Saving a different URL removes
-                offline copies tied to the old address for this account.
-              </p>
-              <input
-                type="url"
-                value={serverUrl}
-                onChange={(e) => { setServerUrl(e.target.value); setServerSaved(false); }}
-                placeholder="http://192.168.1.100:3001"
-                className="w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-white placeholder-gray-600 focus:border-orange-500 focus:outline-none"
-              />
+            <div className="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2.5 text-xs text-gray-400">
+              API server:{" "}
+              <span className="break-all font-mono text-gray-300">{SPEED_API_ORIGIN}</span>
             </div>
-            <button
-              type="button"
-              onClick={handleSaveServerUrl}
-              className="flex w-full items-center justify-center gap-2 rounded-lg border border-gray-700 px-4 py-2.5 text-sm text-gray-300 hover:border-gray-500"
-            >
-              {serverSaved && <Check className="h-4 w-4 text-green-400" />}
-              {serverSaved ? "Saved" : "Save server URL"}
-            </button>
           </div>
         )}
 

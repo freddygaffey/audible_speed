@@ -157,9 +157,12 @@ def _register_android(
     }
 
     resp = httpx.post(f"https://api.amazon.{domain}/auth/register", json=body)
-    resp_json = resp.json()
+    try:
+        resp_json = resp.json()
+    except Exception:
+        raise Exception(f"auth/register HTTP {resp.status_code}: {resp.text[:500]}") from None
     if resp.status_code != 200:
-        raise Exception(resp_json)
+        raise Exception(json.dumps(resp_json)[:800])
 
     success = resp_json["response"]["success"]
     tokens = success["tokens"]
