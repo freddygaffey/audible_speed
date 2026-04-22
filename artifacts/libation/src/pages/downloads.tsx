@@ -1,4 +1,10 @@
-import { useListDownloads, useCancelDownload, DownloadJob, useStartDownload } from "@workspace/api-client-react";
+import {
+  useListDownloads,
+  useCancelDownload,
+  DownloadJob,
+  useStartDownload,
+  getListDownloadsQueryKey,
+} from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -11,12 +17,15 @@ import { useToast } from "@/hooks/use-toast";
 export default function DownloadsPage() {
   const { data: downloads = [], isLoading } = useListDownloads({
     query: {
+      queryKey: getListDownloadsQueryKey(),
       refetchInterval: (query) => {
         const jobs = query.state.data;
-        const hasActive = jobs?.some(j => j.status === "queued" || j.status === "downloading" || j.status === "converting");
+        const hasActive = jobs?.some(
+          (j) => j.status === "queued" || j.status === "downloading" || j.status === "converting",
+        );
         return hasActive ? 2000 : false;
-      }
-    }
+      },
+    },
   });
 
   const activeDownloads = downloads.filter(d => ["queued", "downloading", "converting"].includes(d.status));

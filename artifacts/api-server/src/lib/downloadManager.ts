@@ -238,17 +238,32 @@ function makeId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
+function makeDiskJobId(asin: string, format: "mp3" | "m4b"): string {
+  return `disk-${asin.toLowerCase()}-${format}`;
+}
+
 function update(job: DownloadJob, patch: Partial<DownloadJob>): void {
   Object.assign(job, patch, { updatedAt: new Date().toISOString() });
 }
 
+function pruneMissingDoneJobs(): void {
+  for (const [id, job] of jobs) {
+    if (job.status !== "done") continue;
+    if (!job.outputPath || !fs.existsSync(job.outputPath)) {
+      jobs.delete(id);
+    }
+  }
+}
+
 export function listJobs(): DownloadJob[] {
+  pruneMissingDoneJobs();
   return Array.from(jobs.values()).sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
 }
 
 export function getJob(id: string): DownloadJob | undefined {
+  pruneMissingDoneJobs();
   return jobs.get(id);
 }
 
@@ -311,13 +326,52 @@ export function cancelJob(id: string): boolean {
   return true;
 }
 
+function rehydrateDoneJobsFromDisk(): void {
+  if (!fs.existsSync(DOWNLOADS_DIR)) return;
+  const names = fs.readdirSync(DOWNLOADS_DIR);
+  for (const name of names) {
+    const m = /^([A-Z0-9]{8,32})\.(m4b|mp3)$/i.exec(name);
+    if (!m) continue;
+    const asin = m[1]!;
+    const format = m[2]!.toLowerCase() as "mp3" | "m4b";
+    const outputPath = path.join(DOWNLOADS_DIR, name);
+    try {
+      const st = fs.statSync(outputPath);
+      if (!st.isFile() || st.size < 512) continue;
+      const id = makeDiskJobId(asin, format);
+      if (jobs.has(id)) continue;
+      const ts = st.mtime.toISOString();
+      jobs.set(id, {
+        id,
+        asin,
+        title: asin,
+        status: "done",
+        progress: 100,
+        format,
+        outputPath,
+        error: null,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+    } catch (err) {
+      logger.warn({ name, err }, "Skipping invalid downloaded file during rehydrate");
+    }
+  }
+}
+
+rehydrateDoneJobsFromDisk();
+
 export async function startDownload(
   asin: string,
   title: string,
   format: "mp3" | "m4b" = "mp3"
 ): Promise<DownloadJob> {
+  pruneMissingDoneJobs();
   // Check for existing job
   for (const job of jobs.values()) {
+    if (job.asin === asin && job.status === "done" && job.outputPath && fs.existsSync(job.outputPath)) {
+      return job;
+    }
     if (job.asin === asin && (job.status === "queued" || job.status === "downloading" || job.status === "converting")) {
       return job;
     }

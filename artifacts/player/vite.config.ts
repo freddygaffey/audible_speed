@@ -4,7 +4,10 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
 const port = Number(process.env.PORT ?? "5173");
-const basePath = process.env.BASE_PATH ?? "/";
+// Default `./` so bundled assets work in Capacitor (WKWebView). Absolute `/assets/...`
+// resolves to the wrong origin path and yields a blank white screen. Override with
+// BASE_PATH=/ or BASE_PATH=/subdir/ for static web hosting if needed.
+const basePath = process.env.BASE_PATH ?? "./";
 
 export default defineConfig({
   base: basePath,

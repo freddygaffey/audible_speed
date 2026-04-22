@@ -39,6 +39,29 @@ export function saveLibrary(books: Book[], total: number, identity: LibraryIdent
   }
 }
 
+export function upsertBookProgress(
+  asin: string,
+  positionMs: number,
+  updatedAt: string,
+  identity: LibraryIdentity,
+) {
+  try {
+    const cache = loadLibrary(identity);
+    if (!cache) return;
+    const idx = cache.books.findIndex((b) => b.asin === asin);
+    if (idx < 0) return;
+    const next = [...cache.books];
+    next[idx] = {
+      ...next[idx],
+      lastPositionMs: Math.max(0, Math.floor(positionMs)),
+      lastPositionUpdated: updatedAt,
+    };
+    saveLibrary(next, cache.total, identity);
+  } catch {
+    // ignore cache write failures
+  }
+}
+
 export function getBook(asin: string, identity: LibraryIdentity): Book | null {
   const cache = loadLibrary(identity);
   return cache?.books.find((b) => b.asin === asin) ?? null;

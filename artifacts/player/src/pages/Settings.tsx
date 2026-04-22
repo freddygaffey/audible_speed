@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, useCallback, type FormEvent } from "react";
 import { useLocation } from "wouter";
 import { ArrowLeft, Check, Loader2 } from "lucide-react";
 import { useAuth } from "../lib/authContext";
@@ -10,15 +10,39 @@ import {
   isValidActivationBytes,
 } from "../lib/activationBytes";
 import { isNative, getStoredServerUrl, saveServerUrl } from "../lib/platformConfig";
+import {
+  clearAllVaults,
+  clearVaultScope,
+  formatVaultBytes,
+  getVaultTotalBytes,
+} from "../lib/audioVault";
+import { useMobilePreview } from "../lib/mobilePreviewContext";
 
 export default function Settings() {
   const { session, signOut } = useAuth();
+  const { mobilePreview, setMobilePreview } = useMobilePreview();
   const [, navigate] = useLocation();
   const [bytes, setBytes] = useState(() => loadActivationBytes() ?? "");
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [serverUrl, setServerUrl] = useState(() => getStoredServerUrl());
   const [serverSaved, setServerSaved] = useState(false);
+  const [vaultBytes, setVaultBytes] = useState(0);
+  const [vaultBusy, setVaultBusy] = useState(false);
+
+  const refreshVaultSize = useCallback(async () => {
+    if (!isNative()) return;
+    setVaultBusy(true);
+    try {
+      setVaultBytes(await getVaultTotalBytes());
+    } finally {
+      setVaultBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshVaultSize();
+  }, [refreshVaultSize, session?.username, session?.marketplace]);
 
   async function handleSave(e: FormEvent) {
     e.preventDefault();
@@ -46,9 +70,30 @@ export default function Settings() {
   }
 
   function handleSaveServerUrl() {
+    const prev = getStoredServerUrl().replace(/\/$/, "");
+    const next = serverUrl.trim().replace(/\/$/, "");
+    if (session && prev && next && prev !== next) {
+      void clearVaultScope({
+        serverUrl: prev,
+        username: session.username,
+        marketplace: session.marketplace,
+      });
+    }
     saveServerUrl(serverUrl);
     setServerSaved(true);
     setTimeout(() => setServerSaved(false), 2000);
+    void refreshVaultSize();
+  }
+
+  async function handleClearOfflineVault() {
+    if (!isNative()) return;
+    setVaultBusy(true);
+    try {
+      await clearAllVaults();
+      setVaultBytes(0);
+    } finally {
+      setVaultBusy(false);
+    }
   }
 
   return (
@@ -62,6 +107,33 @@ export default function Settings() {
             <ArrowLeft className="h-5 w-5" />
           </button>
           <h1 className="text-xl font-bold text-white">Settings</h1>
+        </div>
+
+        <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-white">Mobile layout preview</p>
+              <p className="mt-1 text-xs text-gray-500">
+                Pins the app to about phone width (~390px) so you can check library and player on a narrow column
+                (including offline). The choice is saved on this device.
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={mobilePreview}
+              onClick={() => setMobilePreview(!mobilePreview)}
+              className={`relative mt-0.5 h-7 w-12 shrink-0 rounded-full transition-colors ${
+                mobilePreview ? "bg-orange-500" : "bg-gray-700"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
+                  mobilePreview ? "translate-x-5" : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
         </div>
 
         {session && (
@@ -80,10 +152,29 @@ export default function Settings() {
 
         {isNative() && (
           <div className="space-y-3">
+            <div className="rounded-xl border border-gray-800 bg-gray-900 p-4 space-y-3">
+              <p className="text-sm font-medium text-white">Offline audio vault</p>
+              <p className="text-xs text-gray-500">
+                Finished downloads are copied here so you can play without re-downloading from the server. Changing
+                server URL clears the vault for the previous server only.
+              </p>
+              <p className="text-xs text-gray-400">
+                {vaultBusy ? "…" : `Using about ${formatVaultBytes(vaultBytes)} on this device.`}
+              </p>
+              <button
+                type="button"
+                disabled={vaultBusy || vaultBytes === 0}
+                onClick={() => void handleClearOfflineVault()}
+                className="w-full rounded-lg border border-gray-700 px-4 py-2.5 text-sm text-gray-300 hover:border-gray-500 disabled:opacity-40"
+              >
+                Clear offline audio
+              </button>
+            </div>
             <div>
               <label className="mb-1.5 block text-sm font-medium text-gray-300">Server URL</label>
               <p className="mb-3 text-xs text-gray-500">
-                Address of your Speed API server (e.g. http://192.168.1.100:3001).
+                Address of your Speed API server (e.g. http://192.168.1.100:3001). Saving a different URL removes
+                offline copies tied to the old address for this account.
               </p>
               <input
                 type="url"

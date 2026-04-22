@@ -53,3 +53,9 @@ Thumbs.db
 
 # Python venv (api-server audible_auth.py)
 artifacts/api-server/.venv
+
+# api-server runtime (sessions, media, logs — do not commit)
+artifacts/api-server/.audible-session.json
+artifacts/api-server/.pending-sessions.json
+artifacts/api-server/downloads/
+artifacts/api-server/logs/

@@ -139,7 +139,8 @@ def _register_android(
             "app_version": ANDROID_APP_VERSION,
             "device_serial": serial,
             "device_type": ANDROID_DEVICE_TYPE,
-            "device_name": ANDROID_DEVICE_NAME,
+            # Amazon rejects a fixed emulator name if it already exists on the account (DuplicateDeviceName).
+            "device_name": f"{ANDROID_DEVICE_NAME}_{serial}",
             "os_version": ANDROID_OS_VERSION,
             "software_version": ANDROID_SOFTWARE_VERSION,
             "device_model": ANDROID_DEVICE_MODEL,

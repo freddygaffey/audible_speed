@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   listDownloadJobs,
@@ -7,6 +8,12 @@ import {
   type DownloadJob,
 } from "../lib/apiClient";
 import { useAuth } from "../lib/authContext";
+import { getApiBaseUrl, getStoredServerUrl, isNative } from "../lib/platformConfig";
+import {
+  ensureVaultCopy,
+  removeVaultAsin,
+  clearVaultScope,
+} from "../lib/audioVault";
 
 const ACTIVE = new Set(["queued", "downloading", "converting"]);
 
@@ -55,6 +62,25 @@ export function useDownloads() {
 
   const byAsin = pickJobPerAsin(jobs);
 
+  useEffect(() => {
+    if (!session || !isNative()) return;
+    const serverUrl = getStoredServerUrl();
+    if (!serverUrl) return;
+    const base = getApiBaseUrl();
+    for (const j of jobs) {
+      if (j.status !== "done") continue;
+      const remoteUrl = `${base}/audible/download/${j.id}/file`;
+      void ensureVaultCopy({
+        serverUrl,
+        username: session.username,
+        marketplace: session.marketplace,
+        asin: j.asin,
+        jobId: j.id,
+        remoteUrl,
+      });
+    }
+  }, [jobs, session]);
+
   async function download(asin: string, title: string) {
     if (!session) return;
     await startDownload(asin, title, "m4b");
@@ -63,9 +89,28 @@ export function useDownloads() {
     });
   }
 
+  async function downloadBatch(items: Array<{ asin: string; title: string }>) {
+    if (!session || items.length === 0) return;
+    for (const item of items) {
+      await startDownload(item.asin, item.title, "m4b");
+    }
+    await queryClient.invalidateQueries({
+      queryKey: ["downloads", session.username, session.marketplace],
+    });
+  }
+
   async function removeDownload(asin: string) {
     if (!session) return;
     await deleteDownloadForAsin(asin);
+    const serverUrl = getStoredServerUrl();
+    if (serverUrl && isNative()) {
+      await removeVaultAsin({
+        serverUrl,
+        username: session.username,
+        marketplace: session.marketplace,
+        asin,
+      });
+    }
     await queryClient.invalidateQueries({
       queryKey: ["downloads", session.username, session.marketplace],
     });
@@ -77,6 +122,14 @@ export function useDownloads() {
   async function removeAllDownloads() {
     if (!session) return;
     await deleteAllDownloadedFiles();
+    const serverUrl = getStoredServerUrl();
+    if (serverUrl && isNative()) {
+      await clearVaultScope({
+        serverUrl,
+        username: session.username,
+        marketplace: session.marketplace,
+      });
+    }
     await queryClient.invalidateQueries({
       queryKey: ["downloads", session.username, session.marketplace],
     });
@@ -85,5 +138,5 @@ export function useDownloads() {
     });
   }
 
-  return { jobs, byAsin, download, removeDownload, removeAllDownloads };
+  return { jobs, byAsin, download, downloadBatch, removeDownload, removeAllDownloads };
 }

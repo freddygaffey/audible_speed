@@ -54,6 +54,7 @@ function stripProtocol(domain) {
   return new URL(urlString).host;
 }
 
+/** @returns {string | null} */
 function getDeploymentDomain() {
   if (process.env.REPLIT_INTERNAL_APP_DOMAIN) {
     return stripProtocol(process.env.REPLIT_INTERNAL_APP_DOMAIN);
@@ -67,10 +68,7 @@ function getDeploymentDomain() {
     return stripProtocol(process.env.EXPO_PUBLIC_DOMAIN);
   }
 
-  console.error(
-    "ERROR: No deployment domain found. Set REPLIT_INTERNAL_APP_DOMAIN, REPLIT_DEV_DOMAIN, or EXPO_PUBLIC_DOMAIN",
-  );
-  process.exit(1);
+  return null;
 }
 
 function prepareDirectories(timestamp) {
@@ -506,11 +504,18 @@ function updateManifests(manifests, timestamp, baseUrl, assetsByHash) {
 }
 
 async function main() {
-  console.log("Building static Expo Go deployment...");
-
   setupSignalHandlers();
 
   const domain = getDeploymentDomain();
+  if (!domain) {
+    console.log(
+      "Skipping audiobook-player static Expo Go build (no deployment domain). " +
+        "For the full Replit static bundle, set REPLIT_INTERNAL_APP_DOMAIN, REPLIT_DEV_DOMAIN, or EXPO_PUBLIC_DOMAIN.",
+    );
+    process.exit(0);
+  }
+
+  console.log("Building static Expo Go deployment...");
   const expoPublicReplId = getExpoPublicReplId();
   const baseUrl = `https://${domain}`;
   const timestamp = `${Date.now()}-${process.pid}`;

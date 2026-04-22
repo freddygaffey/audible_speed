@@ -1,8 +1,10 @@
+import type { ComponentProps } from "react"
 import { Loader2Icon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
-function Spinner({ className, ...props }: React.ComponentProps<"svg">) {
+/** Omit `ref` so props stay compatible with `lucide-react` when duplicate `@types/react` trees exist. */
+function Spinner({ className, ...props }: Omit<ComponentProps<"svg">, "ref">) {
   return (
     <Loader2Icon
       role="status"

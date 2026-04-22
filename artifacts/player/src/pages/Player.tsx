@@ -1,10 +1,12 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { useParams, useLocation } from "wouter";
-import { ArrowLeft, Play, Pause, SkipBack, SkipForward, BookOpen } from "lucide-react";
+import { ArrowLeft, Play, Pause, SkipBack, SkipForward, BookOpen, List, X } from "lucide-react";
 import { useDownloads } from "../hooks/useDownloads";
-import { getBook } from "../lib/libraryCache";
+import { getBook, upsertBookProgress } from "../lib/libraryCache";
 import { useAuth } from "../lib/authContext";
-import { getApiBaseUrl } from "../lib/platformConfig";
+import { getApiBaseUrl, getStoredServerUrl, isNative } from "../lib/platformConfig";
+import { getChapterInfo, type ChapterInfo, getListeningProgress, syncListeningProgress } from "../lib/apiClient";
+import { ensureVaultCopy, getLocalPlaybackUrl } from "../lib/audioVault";
 
 const SPEED_MIN = 0.5;
 const SPEED_MAX = 16;
@@ -40,21 +42,65 @@ export default function Player() {
   const { session } = useAuth();
   const { byAsin } = useDownloads();
   const audioRef = useRef<HTMLAudioElement>(null);
+  const resumeAppliedRef = useRef(false);
+  const lastSyncedPositionMsRef = useRef(0);
+  const lastSyncAtRef = useRef(0);
+  const syncInFlightRef = useRef(false);
 
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [speed, setSpeed] = useState(loadSavedSpeed);
   const [mediaError, setMediaError] = useState<string | null>(null);
+  const [remoteResumeMs, setRemoteResumeMs] = useState<number | null>(null);
+  const [chapterInfo, setChapterInfo] = useState<ChapterInfo | null>(null);
+  const [chaptersModalOpen, setChaptersModalOpen] = useState(false);
 
   const asin = params.asin ?? "";
   const job = byAsin.get(asin);
   const book = session ? getBook(asin, session) : null;
-  const fileUrl =
+  const remoteFileUrl =
     job?.status === "done" ? `${getApiBaseUrl()}/audible/download/${job.id}/file` : null;
+  const [localPlaybackUrl, setLocalPlaybackUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLocalPlaybackUrl(null);
+    if (!remoteFileUrl || !session) return;
+    if (!isNative()) return;
+    const jobId = job?.id;
+    if (!jobId) return;
+    let cancelled = false;
+    const asinNow = asin;
+    const serverUrl = getStoredServerUrl();
+    if (!serverUrl) return;
+    void getLocalPlaybackUrl({
+      serverUrl,
+      username: session.username,
+      marketplace: session.marketplace,
+      asin: asinNow,
+      jobId,
+    }).then((url) => {
+      if (!cancelled && asin === asinNow) setLocalPlaybackUrl(url);
+    });
+    void ensureVaultCopy({
+      serverUrl,
+      username: session.username,
+      marketplace: session.marketplace,
+      asin: asinNow,
+      jobId,
+      remoteUrl: remoteFileUrl,
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [remoteFileUrl, session, asin, job?.id]);
+
+  const displaySrc = localPlaybackUrl ?? remoteFileUrl;
   const title = book?.title ?? job?.title ?? "Audiobook";
   const author = book?.authors.join(", ") ?? "";
   const coverUrl = book?.coverUrl ?? null;
+  const lastPositionMs = book?.lastPositionMs ?? null;
+  const effectiveResumeMs = remoteResumeMs ?? lastPositionMs;
 
   const skip = useCallback((seconds: number) => {
     const audio = audioRef.current;
@@ -74,6 +120,41 @@ export default function Player() {
       audio.pause();
     }
   }, []);
+
+  const pushProgress = useCallback(
+    (force: boolean) => {
+      if (!session || !asin) return;
+      const audio = audioRef.current;
+      if (!audio) return;
+      const positionMs = Math.max(0, Math.floor(audio.currentTime * 1000));
+      if (!Number.isFinite(positionMs)) return;
+      const now = Date.now();
+      if (!force) {
+        if (positionMs < 5000) return;
+        if (Math.abs(positionMs - lastSyncedPositionMsRef.current) < 15000) return;
+        if (now - lastSyncAtRef.current < 15000) return;
+      } else if (positionMs < 1000) {
+        return;
+      }
+      if (syncInFlightRef.current) return;
+      syncInFlightRef.current = true;
+      void syncListeningProgress(asin, positionMs)
+        .then(() => {
+          lastSyncedPositionMsRef.current = positionMs;
+          lastSyncAtRef.current = Date.now();
+          if (session) {
+            upsertBookProgress(asin, positionMs, new Date().toISOString(), session);
+          }
+        })
+        .catch(() => {
+          // keep playback uninterrupted if sync fails transiently
+        })
+        .finally(() => {
+          syncInFlightRef.current = false;
+        });
+    },
+    [asin, session],
+  );
 
   // Apply speed + preservesPitch when audio or speed changes
   useEffect(() => {
@@ -108,7 +189,7 @@ export default function Player() {
 
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || !fileUrl) return;
+    if (!audio || !displaySrc) return;
 
     const onTime = () => {
       setCurrentTime(audio.currentTime);
@@ -119,11 +200,17 @@ export default function Player() {
           position: audio.currentTime,
         });
       }
+      pushProgress(false);
     };
     const onLoaded = () => {
       const d = audio.duration;
       setDuration(Number.isFinite(d) && d > 0 ? d : 0);
       audio.playbackRate = speed;
+      if (!resumeAppliedRef.current && effectiveResumeMs != null && effectiveResumeMs > 0) {
+        audio.currentTime = Math.floor(effectiveResumeMs / 1000);
+        setCurrentTime(audio.currentTime);
+        resumeAppliedRef.current = true;
+      }
       setMediaError(null);
     };
     const onPlay = () => {
@@ -133,6 +220,10 @@ export default function Player() {
     const onPause = () => {
       setPlaying(false);
       if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
+      pushProgress(true);
+    };
+    const onEnded = () => {
+      pushProgress(true);
     };
     const onError = () => {
       const err = audio.error;
@@ -144,7 +235,40 @@ export default function Player() {
           "Decode error — this file may be an older download. Remove it from the library and download again (new copies use a browser-safe format).",
         4: "Format not supported",
       };
-      setMediaError(map[code ?? 0] ?? err?.message ?? "Could not load audio");
+      const fallback = map[code ?? 0] ?? err?.message ?? "Could not load audio";
+      if (code === 4 && remoteFileUrl) {
+        // Code 4 can also happen when backend/file endpoint is unavailable, not only codec issues.
+        void fetch(remoteFileUrl, { headers: { Range: "bytes=0-1" } })
+          .then((resp) => {
+            if (!resp.ok) {
+              setMediaError(
+                `Audio file endpoint unavailable (HTTP ${resp.status}). ` +
+                  "If the server just restarted, refresh and try again.",
+              );
+              return;
+            }
+            const ct = (resp.headers.get("content-type") ?? "").toLowerCase();
+            if (!ct.includes("audio/")) {
+              setMediaError(
+                "Audio response was not a playable media type. " +
+                  "Refresh and retry; if it persists, remove and re-download this title.",
+              );
+              return;
+            }
+            setMediaError(
+              "Format not supported by this browser for this file. " +
+                "Try removing and re-downloading the title.",
+            );
+          })
+          .catch(() => {
+            setMediaError(
+              "Could not reach audio endpoint (server unavailable). " +
+                "Refresh after the API server is up.",
+            );
+          });
+      } else {
+        setMediaError(fallback);
+      }
       setPlaying(false);
     };
 
@@ -154,6 +278,7 @@ export default function Player() {
     audio.addEventListener("play", onPlay);
     audio.addEventListener("pause", onPause);
     audio.addEventListener("error", onError);
+    audio.addEventListener("ended", onEnded);
     return () => {
       audio.removeEventListener("timeupdate", onTime);
       audio.removeEventListener("loadedmetadata", onLoaded);
@@ -161,8 +286,97 @@ export default function Player() {
       audio.removeEventListener("play", onPlay);
       audio.removeEventListener("pause", onPause);
       audio.removeEventListener("error", onError);
+      audio.removeEventListener("ended", onEnded);
     };
-  }, [speed, duration, fileUrl]);
+  }, [speed, duration, displaySrc, remoteFileUrl, effectiveResumeMs, pushProgress]);
+
+  useEffect(() => {
+    resumeAppliedRef.current = false;
+    lastSyncedPositionMsRef.current = 0;
+    lastSyncAtRef.current = 0;
+    setRemoteResumeMs(null);
+  }, [asin, displaySrc]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!asin || !session) return;
+    void getListeningProgress(asin)
+      .then((progress) => {
+        if (cancelled) return;
+        if (progress.positionMs != null) {
+          setRemoteResumeMs(progress.positionMs);
+          upsertBookProgress(
+            asin,
+            progress.positionMs,
+            progress.updatedAt ?? new Date().toISOString(),
+            session,
+          );
+        }
+      })
+      .catch(() => {
+        // keep player usable if cloud progress read fails
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [asin, session]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!asin || !session) return;
+    void getChapterInfo(asin)
+      .then((info) => {
+        if (!cancelled) setChapterInfo(info);
+      })
+      .catch(() => {
+        if (!cancelled) setChapterInfo(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [asin, session]);
+
+  const chapterList = chapterInfo?.chapters ?? [];
+  const currentMs = Math.floor(currentTime * 1000);
+  const activeChapterIdx =
+    chapterList.length === 0
+      ? -1
+      : chapterList.findIndex((ch, idx) => {
+          const next = chapterList[idx + 1];
+          const end = next ? next.startOffsetMs : Number.MAX_SAFE_INTEGER;
+          return currentMs >= ch.startOffsetMs && currentMs < end;
+        });
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) pushProgress(true);
+    };
+    const onBeforeUnload = () => pushProgress(true);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      pushProgress(true);
+    };
+  }, [pushProgress]);
+
+  useEffect(() => {
+    if (!chaptersModalOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setChaptersModalOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [chaptersModalOpen]);
+
+  useEffect(() => {
+    if (!chaptersModalOpen || activeChapterIdx < 0) return;
+    const id = `player-chapter-${activeChapterIdx}`;
+    requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  }, [chaptersModalOpen, activeChapterIdx]);
 
   function changeSpeed(delta: number) {
     setSpeed((prev) => clampSpeed(quantizeSpeed(prev + delta)));
@@ -174,7 +388,7 @@ export default function Player() {
     audio.currentTime = Number(e.target.value);
   }
 
-  if (!fileUrl) {
+  if (!remoteFileUrl) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-gray-950 text-white">
         <p className="text-gray-400">Book not downloaded yet.</p>
@@ -297,13 +511,91 @@ export default function Player() {
             <span>{SPEED_MAX.toFixed(1)}×</span>
           </div>
         </div>
+
+        {chapterList.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setChaptersModalOpen(true)}
+            className="flex w-full max-w-sm items-center justify-center gap-2 rounded-xl border border-gray-700 bg-gray-900/80 py-3 text-sm font-medium text-gray-200 transition-colors hover:border-gray-500 hover:bg-gray-800 hover:text-white"
+          >
+            <List className="h-4 w-4 text-orange-400" aria-hidden />
+            Chapters
+            <span className="ml-1 rounded-full bg-gray-800 px-2 py-0.5 text-[11px] font-normal text-gray-400">
+              {chapterList.length}
+            </span>
+          </button>
+        )}
       </div>
+
+      {chaptersModalOpen && chapterList.length > 0 && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4"
+          role="presentation"
+        >
+          <button
+            type="button"
+            aria-label="Close chapters"
+            className="absolute inset-0 bg-black/65 backdrop-blur-[2px]"
+            onClick={() => setChaptersModalOpen(false)}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="chapters-modal-title"
+            className="relative flex max-h-[min(78dvh,560px)] w-full max-w-sm flex-col rounded-t-2xl border border-gray-800 bg-gray-900 shadow-2xl sm:max-h-[min(85vh,560px)] sm:rounded-2xl"
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-gray-800 px-4 py-3">
+              <h2 id="chapters-modal-title" className="text-base font-semibold text-white">
+                Chapters
+              </h2>
+              <button
+                type="button"
+                onClick={() => setChaptersModalOpen(false)}
+                className="rounded-lg p-2 text-gray-400 hover:bg-gray-800 hover:text-white"
+                aria-label="Close"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2 pb-[max(1rem,env(safe-area-inset-bottom))]">
+              <div className="space-y-1">
+                {chapterList.map((ch, idx) => {
+                  const isActive = idx === activeChapterIdx;
+                  return (
+                    <button
+                      id={`player-chapter-${idx}`}
+                      key={`${ch.startOffsetMs}-${idx}`}
+                      type="button"
+                      onClick={() => {
+                        const audio = audioRef.current;
+                        if (!audio) return;
+                        audio.currentTime = Math.max(0, Math.floor(ch.startOffsetMs / 1000));
+                        setChaptersModalOpen(false);
+                      }}
+                      className={`w-full rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${
+                        isActive
+                          ? "bg-orange-500/15 text-orange-200 ring-1 ring-orange-500/40"
+                          : "text-gray-200 hover:bg-gray-800 hover:text-white"
+                      }`}
+                    >
+                      <div className="truncate font-medium">{ch.title || `Chapter ${idx + 1}`}</div>
+                      <div className="mt-0.5 text-xs text-gray-500">
+                        {formatTime(Math.floor(ch.startOffsetMs / 1000))}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Hidden audio element — key forces reload when job/url changes; playsInline helps iOS WebView */}
       <audio
         ref={audioRef}
-        key={fileUrl}
-        src={fileUrl}
+        key={`${asin}:${displaySrc}`}
+        src={displaySrc ?? undefined}
         preload="metadata"
         playsInline
       />

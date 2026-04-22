@@ -1,1 +1,9 @@
 @import "tailwindcss";
+
+/* Capacitor / slow networks: avoid flash of white before JS + Tailwind paint */
+html,
+body,
+#root {
+  min-height: 100%;
+  background-color: #030712;
+}

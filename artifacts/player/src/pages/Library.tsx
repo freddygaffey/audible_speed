@@ -5,18 +5,23 @@ import {
   BookOpen,
   WifiOff,
   Settings,
+  Smartphone,
   Download,
   CheckCircle,
   Loader2,
   Play,
   Search,
   Trash2,
+  CheckSquare,
+  Square,
+  X,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { fetchLibraryAll, type Book, type DownloadJob } from "../lib/apiClient";
 import { saveLibrary, loadLibrary } from "../lib/libraryCache";
 import { useDownloads } from "../hooks/useDownloads";
 import { useAuth } from "../lib/authContext";
+import { useMobilePreview } from "../lib/mobilePreviewContext";
 
 type SortMode = "recent" | "az" | "downloaded";
 
@@ -25,6 +30,19 @@ function formatRuntime(minutes: number | null) {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function formatResume(positionMs: number | null, runtimeMinutes: number | null): string | null {
+  if (positionMs == null || positionMs <= 0) return null;
+  const totalMs = runtimeMinutes != null && runtimeMinutes > 0 ? runtimeMinutes * 60_000 : null;
+  const pct =
+    totalMs && totalMs > 0 ? Math.max(0, Math.min(100, Math.floor((positionMs / totalMs) * 100))) : null;
+  const totalSec = Math.floor(positionMs / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const stamp = h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
+  return pct != null ? `Resume ${stamp} (${pct}%)` : `Resume ${stamp}`;
 }
 
 function isNonRetriableDownloadError(errorText: string | null | undefined): boolean {
@@ -107,17 +125,31 @@ function DownloadButton({ book, job, onDownload }: {
   );
 }
 
-function BookCard({ book, job, onDownload, onRemoveDownload }: {
+function BookCard({ book, job, onDownload, onRemoveDownload, selectMode = false, selected = false, onToggleSelect }: {
   book: Book;
   job: DownloadJob | undefined;
   onDownload: () => void;
   onRemoveDownload?: () => void;
+  selectMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }) {
   const isDone = job?.status === "done" || book.status === "downloaded";
+  const resumeLabel = formatResume(book.lastPositionMs, book.runtimeMinutes);
 
   return (
     <div className="flex flex-col gap-2 rounded-xl bg-gray-900 p-3 transition-colors hover:bg-gray-800">
       <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-gray-800">
+        {selectMode && (
+          <button
+            type="button"
+            onClick={onToggleSelect}
+            className="absolute left-1 top-1 z-10 rounded bg-black/55 p-1 text-white hover:bg-black/70"
+            title={selected ? "Deselect" : "Select"}
+          >
+            {selected ? <CheckSquare className="h-4 w-4 text-orange-300" /> : <Square className="h-4 w-4" />}
+          </button>
+        )}
         {book.coverUrl ? (
           <img
             src={book.coverUrl}
@@ -145,8 +177,19 @@ function BookCard({ book, job, onDownload, onRemoveDownload }: {
             {formatRuntime(book.runtimeMinutes)}
           </p>
         )}
+        {resumeLabel && <p className="text-xs text-orange-400">{resumeLabel}</p>}
         <div className="flex items-center justify-between gap-2">
-          <DownloadButton book={book} job={job} onDownload={onDownload} />
+          {selectMode ? (
+            <button
+              type="button"
+              onClick={onToggleSelect}
+              className="text-xs text-gray-300 hover:text-white"
+            >
+              {selected ? "Selected" : "Select"}
+            </button>
+          ) : (
+            <DownloadButton book={book} job={job} onDownload={onDownload} />
+          )}
           {job && onRemoveDownload && (
             <button
               type="button"
@@ -176,20 +219,26 @@ function sortBooks(books: Book[], mode: SortMode, byAsin: Map<string, DownloadJo
     if (mode === "az") {
       return a.title.localeCompare(b.title);
     }
-    // recent: by purchaseDate desc
-    const aDate = a.purchaseDate ?? "0";
-    const bDate = b.purchaseDate ?? "0";
+    // recent: match Audible-style "continue listening" intent first, then purchase recency.
+    const aListen = a.lastPositionUpdated ?? "";
+    const bListen = b.lastPositionUpdated ?? "";
+    if (aListen !== bListen) return bListen.localeCompare(aListen);
+    const aDate = a.purchaseDate ?? "";
+    const bDate = b.purchaseDate ?? "";
     return bDate.localeCompare(aDate);
   });
 }
 
 export default function Library() {
   const { session } = useAuth();
+  const { mobilePreview, toggleMobilePreview } = useMobilePreview();
   const cached = session ? loadLibrary(session) : null;
-  const { jobs, byAsin, download, removeDownload, removeAllDownloads } = useDownloads();
+  const { jobs, byAsin, download, downloadBatch, removeDownload, removeAllDownloads } = useDownloads();
   const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortMode>("recent");
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedAsins, setSelectedAsins] = useState<Set<string>>(new Set());
 
   const accountKey = session ? [session.username, session.marketplace] as const : ["", ""] as const;
 
@@ -229,6 +278,37 @@ export default function Library() {
     return sortBooks(filtered, sort, byAsin);
   }, [allBooks, search, sort, byAsin]);
 
+  const selectableBooks = useMemo(
+    () =>
+      filteredBooks.filter((book) => {
+        const job = byAsin.get(book.asin);
+        const isDone = job?.status === "done" || book.status === "downloaded";
+        const isBusy = !!job && ["queued", "downloading", "converting"].includes(job.status);
+        return !isDone && !isBusy;
+      }),
+    [filteredBooks, byAsin],
+  );
+
+  const selectedCount = selectedAsins.size;
+
+  function toggleSelect(asin: string) {
+    setSelectedAsins((prev) => {
+      const next = new Set(prev);
+      if (next.has(asin)) next.delete(asin);
+      else next.add(asin);
+      return next;
+    });
+  }
+
+  function toggleSelectAllEligible() {
+    const eligible = selectableBooks.map((b) => b.asin);
+    setSelectedAsins((prev) => {
+      const allSelected = eligible.length > 0 && eligible.every((asin) => prev.has(asin));
+      if (allSelected) return new Set();
+      return new Set(eligible);
+    });
+  }
+
   return (
     <div className="min-h-screen bg-gray-950 px-4 pb-8 pt-6">
       <div className="mx-auto max-w-5xl">
@@ -247,6 +327,60 @@ export default function Library() {
                 )}
               </p>
             )}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {!selectMode ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectMode(true);
+                    setSelectedAsins(new Set());
+                  }}
+                  className="text-xs text-gray-400 hover:text-white"
+                >
+                  Select for batch download
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={toggleSelectAllEligible}
+                    className="text-xs text-gray-300 hover:text-white"
+                  >
+                    {selectableBooks.length > 0 &&
+                    selectableBooks.every((b) => selectedAsins.has(b.asin))
+                      ? "Clear selection"
+                      : "Select all"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={selectedCount === 0}
+                    onClick={() => {
+                      const batch = filteredBooks
+                        .filter((b) => selectedAsins.has(b.asin))
+                        .map((b) => ({ asin: b.asin, title: b.title }));
+                      void downloadBatch(batch).then(() => {
+                        setSelectMode(false);
+                        setSelectedAsins(new Set());
+                      });
+                    }}
+                    className="text-xs text-orange-400 hover:text-orange-300 disabled:text-gray-600"
+                  >
+                    Download selected ({selectedCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectMode(false);
+                      setSelectedAsins(new Set());
+                    }}
+                    className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300"
+                  >
+                    <X className="h-3 w-3" />
+                    Cancel
+                  </button>
+                </>
+              )}
+            </div>
             {jobs.length > 0 && (
               <button
                 type="button"
@@ -266,12 +400,31 @@ export default function Library() {
               </button>
             )}
           </div>
-          <Link
-            href="/settings"
-            className="flex-shrink-0 rounded-lg p-2 text-gray-400 hover:bg-gray-800 hover:text-white"
-          >
-            <Settings className="h-5 w-5" />
-          </Link>
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={toggleMobilePreview}
+              className={`rounded-lg p-2 transition-colors ${
+                mobilePreview
+                  ? "bg-orange-500/15 text-orange-400"
+                  : "text-gray-400 hover:bg-gray-800 hover:text-white"
+              }`}
+              title={
+                mobilePreview
+                  ? "Turn off mobile width preview"
+                  : "Mobile width preview (~390px) — good for phone / offline layout checks"
+              }
+              aria-pressed={mobilePreview}
+            >
+              <Smartphone className="h-5 w-5" />
+            </button>
+            <Link
+              href="/settings"
+              className="rounded-lg p-2 text-gray-400 hover:bg-gray-800 hover:text-white"
+            >
+              <Settings className="h-5 w-5" />
+            </Link>
+          </div>
         </div>
 
         {/* Search + sort */}
@@ -336,9 +489,13 @@ export default function Library() {
                   key={book.asin}
                   book={book}
                   job={job}
-                  onDownload={isDone
-                    ? () => navigate(`/player/${book.asin}`)
-                    : () => download(book.asin, book.title)}
+                  onDownload={
+                    selectMode
+                      ? () => toggleSelect(book.asin)
+                      : isDone
+                        ? () => navigate(`/player/${book.asin}`)
+                        : () => download(book.asin, book.title)
+                  }
                   onRemoveDownload={
                     job
                       ? () => {
@@ -351,6 +508,9 @@ export default function Library() {
                         }
                       : undefined
                   }
+                  selectMode={selectMode}
+                  selected={selectedAsins.has(book.asin)}
+                  onToggleSelect={() => toggleSelect(book.asin)}
                 />
               );
             })}

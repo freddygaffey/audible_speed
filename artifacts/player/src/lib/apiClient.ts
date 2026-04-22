@@ -85,6 +85,8 @@ export const BookSchema = z.object({
   seriesPosition: z.string().nullable(),
   releaseDate: z.string().nullable(),
   description: z.string().nullable(),
+  lastPositionMs: z.number().nullable(),
+  lastPositionUpdated: z.string().nullable(),
   status: z.enum(["available", "downloaded", "downloading"]),
 });
 export type Book = z.infer<typeof BookSchema>;
@@ -197,6 +199,44 @@ const DeleteAllDownloadsResponseSchema = z.object({
 
 export function deleteAllDownloadedFiles() {
   return apiFetch(DeleteAllDownloadsResponseSchema, "/audible/downloads", { method: "DELETE" });
+}
+
+export function syncListeningProgress(asin: string, positionMs: number) {
+  return apiFetch(z.object({ ok: z.boolean() }), "/audible/progress", {
+    method: "POST",
+    body: JSON.stringify({ asin, positionMs }),
+  });
+}
+
+const ListeningProgressSchema = z.object({
+  positionMs: z.number().nullable(),
+  updatedAt: z.string().nullable(),
+});
+export type ListeningProgress = z.infer<typeof ListeningProgressSchema>;
+
+export function getListeningProgress(asin: string) {
+  return apiFetch(
+    ListeningProgressSchema,
+    `/audible/progress/${encodeURIComponent(asin)}`,
+  );
+}
+
+const ChapterSchema = z.object({
+  title: z.string(),
+  startOffsetMs: z.number(),
+  lengthMs: z.number(),
+});
+
+const ChapterInfoSchema = z.object({
+  runtimeLengthMs: z.number().optional(),
+  isAccurate: z.boolean().optional(),
+  chapters: z.array(ChapterSchema),
+});
+
+export type ChapterInfo = z.infer<typeof ChapterInfoSchema>;
+
+export function getChapterInfo(asin: string) {
+  return apiFetch(ChapterInfoSchema, `/audible/chapters/${encodeURIComponent(asin)}`);
 }
 
 // ---------------------------------------------------------------------------

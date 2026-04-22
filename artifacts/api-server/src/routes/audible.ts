@@ -11,7 +11,7 @@ import {
   clearSession,
   MARKETPLACES,
 } from "../lib/audibleAuth.js";
-import { fetchLibrary } from "../lib/audibleClient.js";
+import { fetchLibrary, getChapterInfo, getLastHeardProgress, syncLastHeardProgress } from "../lib/audibleClient.js";
 import {
   listJobs,
   getJob,
@@ -28,6 +28,7 @@ import {
   DownloadFileParams,
   StartDownloadBody,
 } from "@workspace/api-zod";
+import { sendFileWithByteRange } from "../lib/sendFileWithByteRange.js";
 
 const router: IRouter = Router();
 
@@ -321,6 +322,25 @@ router.get("/audible/library/stats", async (req, res): Promise<void> => {
   }
 });
 
+router.get("/audible/chapters/:asin", async (req, res): Promise<void> => {
+  if (!getSession()) {
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+  const asin = String(req.params.asin ?? "").trim();
+  if (!/^[A-Z0-9]{8,32}$/i.test(asin)) {
+    res.status(400).json({ error: "Invalid ASIN" });
+    return;
+  }
+  try {
+    const chapterInfo = await getChapterInfo(asin);
+    res.json(chapterInfo);
+  } catch (err: any) {
+    req.log.error({ err: err.message, asin }, "Chapter fetch failed");
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Downloads
 // ---------------------------------------------------------------------------
@@ -370,6 +390,49 @@ router.post("/audible/download", async (req, res): Promise<void> => {
   }
 });
 
+router.post("/audible/progress", async (req, res): Promise<void> => {
+  if (!getSession()) {
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+  const asin = String((req.body as { asin?: unknown })?.asin ?? "").trim();
+  const positionMsRaw = (req.body as { positionMs?: unknown })?.positionMs;
+  const positionMs =
+    typeof positionMsRaw === "number" && Number.isFinite(positionMsRaw)
+      ? Math.floor(positionMsRaw)
+      : Number.NaN;
+  if (!/^[A-Z0-9]{8,32}$/i.test(asin) || !Number.isFinite(positionMs) || positionMs < 0) {
+    res.status(400).json({ error: "asin and non-negative numeric positionMs are required" });
+    return;
+  }
+  try {
+    await syncLastHeardProgress(asin, positionMs);
+    res.json({ ok: true });
+  } catch (err: any) {
+    req.log.error({ err: err.message, asin, positionMs }, "Progress sync failed");
+    res.status(502).json({ error: err.message });
+  }
+});
+
+router.get("/audible/progress/:asin", async (req, res): Promise<void> => {
+  if (!getSession()) {
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+  const asin = String(req.params.asin ?? "").trim();
+  if (!/^[A-Z0-9]{8,32}$/i.test(asin)) {
+    res.status(400).json({ error: "Invalid ASIN" });
+    return;
+  }
+  try {
+    const progress = await getLastHeardProgress(asin);
+    res.json(progress);
+  } catch (err: any) {
+    req.log.error({ err: err.message, asin }, "Progress lookup failed");
+    res.status(502).json({ error: err.message });
+  }
+});
+
 router.get("/audible/download/:id", async (req, res): Promise<void> => {
   const parsed = GetDownloadJobParams.safeParse({ id: req.params.id });
   if (!parsed.success) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -403,9 +466,12 @@ router.get("/audible/download/:id/file", async (req, res): Promise<void> => {
   const mimeType =
     ext === "m4b" || ext === "m4a" ? "audio/mp4; codecs=mp4a.40.2" : "audio/mpeg";
   const fileName = `${job.title.replace(/[^a-z0-9 ]/gi, "_")}.${ext}`;
-  res.setHeader("Content-Type", mimeType);
-  res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
-  res.sendFile(job.outputPath);
+  sendFileWithByteRange(req, res, job.outputPath, (r) => {
+    r.setHeader("Content-Type", mimeType);
+    r.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+    // Avoid stale media cache/304 edge-cases across dev restarts and regenerated job ids.
+    r.setHeader("Cache-Control", "no-store");
+  });
 });
 
 // POST /audible/settings/activation-bytes
