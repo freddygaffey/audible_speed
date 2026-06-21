@@ -17,7 +17,7 @@ struct AuthView: View {
         NavigationStack {
             Form {
                 Section("Server") {
-                    TextField("http://127.0.0.1:3001", text: $app.serverURL)
+                    TextField("https://audible-speed.pebnum.com", text: $app.serverURL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)

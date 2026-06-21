@@ -19,7 +19,7 @@ final class AppModel {
     let api: APIClient
 
     init() {
-        let stored = UserDefaults.standard.string(forKey: "serverURL") ?? "http://127.0.0.1:3001"
+        let stored = UserDefaults.standard.string(forKey: "serverURL") ?? "https://audible-speed.pebnum.com"
         serverURL = stored
         api = APIClient(baseURL: AppModel.normalize(stored))
     }
