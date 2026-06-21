@@ -59,3 +59,14 @@ artifacts/api-server/.audible-session.json
 artifacts/api-server/.pending-sessions.json
 artifacts/api-server/downloads/
 artifacts/api-server/logs/
+
+# Local deep-research archive (kept on disk, not in the repo)
+_research/
+
+# Apple client (SwiftUI) — commit source only; regenerate the rest with `xcodegen generate`
+apple/.build/
+apple/DerivedData/
+apple/Speed.xcodeproj/
+apple/Resources/Speed-Info.plist
+apple/.swiftpm/
+*.xcuserstate
